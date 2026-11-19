@@ -7,7 +7,7 @@ namespace Uplift.Rules;
 ///     A fix of GS2 text, run on the code of a part after its conversion (and on parts that were GS2 already). It sees only code: the
 ///     text inside strings and comments is never changed (see <see cref="CodeTokens" />). This is where regular expressions are safe;
 ///     a GS1 → GS2 conversion is not a text replacement (event code is split into functions, = compares inside conditions, comments
-///     and strings must not change), which is why the converter works on the compiler's own syntax tree.
+///     and strings must not change), which is why the converter works on a syntax tree.
 /// </summary>
 public interface ITextFix
 {

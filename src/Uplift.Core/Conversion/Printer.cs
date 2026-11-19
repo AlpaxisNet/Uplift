@@ -1,8 +1,8 @@
-// GS2 source from the syntax tree. Precedence follows the GS2 grammar (low to high):
-// assignment, ?:, ||, &&, & | xor << >>, == != in, < <= > >=, @, + -, * / % ^, prefix, postfix.
+// GS2 source from the syntax tree. Precedence (low to high), the same as the parser's: assignment, ?:, ||, &&, & | << >>,
+// == != in, < <= > >=, @ SPC NL TAB, + -, * / % ^, prefix, postfix.
 using System.Globalization;
 using System.Text;
-using Alpaxis.Scripting.GSAst;
+using Uplift.Syntax;
 
 namespace Uplift.Conversion;
 
@@ -10,28 +10,62 @@ public sealed class Printer
 {
 	private readonly StringBuilder _out = new();
 	private int _indent;
+
+	// "} else " written at the start of the next line (an else-if chain).
+	private string? _pendingPrefix;
+
 	public Comments? Comments { get; init; }
+
 	public string Indent { get; init; } = "  ";
-
-	/// <summary>Numbers the reader folded from constant arithmetic, written as the arithmetic (pi / 2), when set.</summary>
-	public Dictionary<object, Expr>? Folds { get; init; }
-
-	private Expr Unfold(Expr e) => e is NumberExpr && Folds != null && Folds.TryGetValue(e, out var source) ? source : e;
 
 	public override string ToString() => _out.ToString();
 
 	public void Line(string text)
 	{
 		for (var i = 0; i < _indent; i++) _out.Append(Indent);
-		if (_pendingPrefix != null) { _out.Append(_pendingPrefix); _pendingPrefix = null; }
+		if (_pendingPrefix != null)
+		{
+			_out.Append(_pendingPrefix);
+			_pendingPrefix = null;
+		}
 		_out.Append(text).Append('\n');
 	}
-
-	public void Raw(string text) => _out.Append(text);
 
 	public void Blank()
 	{
 		if (_out.Length > 0 && !_out.ToString().EndsWith("\n\n", StringComparison.Ordinal)) _out.Append('\n');
+	}
+
+	// ---- scripts ----
+
+	public void Item(Item item)
+	{
+		switch (item)
+		{
+			case FunctionDecl f:
+				Function(f);
+				break;
+			case StatementItem s:
+				Statement(s.Statement);
+				break;
+			case ConstDecl c:
+				Comments?.Before(c, this);
+				Line($"const {c.Name} = {Expr(c.Value)};");
+				break;
+			case EnumDecl e:
+				Comments?.Before(e, this);
+				Line($"enum {(e.Name == null ? "" : e.Name + " ")}{{ {string.Join(", ", e.Members.Select(m => m.Value == null ? m.Name : m.Name + " = " + Expr(m.Value)))} }}");
+				break;
+		}
+	}
+
+	public void Function(FunctionDecl f)
+	{
+		Comments?.Before(f, this);
+		var name = f.Owner == null ? f.Name : f.Owner + "." + f.Name;
+		Line($"{(f.Public ? "public " : "")}function {name}({string.Join(", ", f.Params)}) {{" + (Comments?.Trailing(f) is { Length: > 0 } t ? " " + t : ""));
+		Block(f.Body);
+		Line("}");
 	}
 
 	// ---- statements ----
@@ -56,37 +90,34 @@ public sealed class Printer
 			case ExprStmt e:
 				Line(Expr(e.Expression) + ";" + Trailing(statement));
 				break;
-			case InlineStmt inline:
-				Statement(inline.Statement);
-				break;
 			case BlockStmt block:
 				Line("{" + Trailing(statement));
 				Block(block.Body);
 				Line("}");
 				break;
 			case ReturnStmt r:
-				Line((r.Expression is NumberExpr { Text: "0" } ? "return" : "return " + Expr(r.Expression)) + ";" + Trailing(statement));
+				Line((r.Value == null ? "return" : "return " + Expr(r.Value)) + ";" + Trailing(statement));
 				break;
 			case IfStmt i:
-				If(i, "if");
+				If(i);
 				break;
 			case ForStmt f:
-				Line($"{Label(f.Label)}for ({(f.Init == null ? "" : Expr(f.Init))}; {Expr(f.Condition)}; {(f.Post == null ? "" : Expr(f.Post))}) {{" + Trailing(statement));
+				Line($"for ({(f.Init == null ? "" : Expr(f.Init))}; {(f.Condition == null ? "" : Expr(f.Condition))}; {(f.Step == null ? "" : Expr(f.Step))}) {{" + Trailing(statement));
 				Block(f.Body);
 				Line("}");
 				break;
 			case ForEachStmt f:
-				Line($"{Label(f.Label)}for ({Expr(f.Name)} : {Expr(f.Source)}) {{" + Trailing(statement));
+				Line($"for ({Expr(f.Variable)} : {Expr(f.Source)}) {{" + Trailing(statement));
 				Block(f.Body);
 				Line("}");
 				break;
 			case WhileStmt w:
-				Line($"{Label(w.Label)}while ({Expr(w.Condition)}) {{" + Trailing(statement));
+				Line($"while ({Expr(w.Condition)}) {{" + Trailing(statement));
 				Block(w.Body);
 				Line("}");
 				break;
 			case DoWhileStmt d:
-				Line($"{Label(d.Label)}do {{");
+				Line("do {" + Trailing(statement));
 				Block(d.Body);
 				Line($"}} while ({Expr(d.Condition)});");
 				break;
@@ -96,7 +127,7 @@ public sealed class Printer
 				Line("}");
 				break;
 			case SwitchStmt s:
-				Line($"{Label(s.Label)}switch ({Expr(s.Expression)}) {{");
+				Line($"switch ({Expr(s.Value)}) {{" + Trailing(statement));
 				_indent++;
 				foreach (var c in s.Cases)
 				{
@@ -106,25 +137,16 @@ public sealed class Printer
 				_indent--;
 				Line("}");
 				break;
-			case BreakStmt b:
-				Line("break" + (b.Label == null ? "" : " " + b.Label) + ";" + Trailing(statement));
+			case BreakStmt:
+				Line("break;" + Trailing(statement));
 				break;
-			case ContinueStmt c:
-				Line("continue" + (c.Label == null ? "" : " " + c.Label) + ";" + Trailing(statement));
-				break;
-			case GotoStmt g:
-				Line($"goto {g.Label};");
-				break;
-			case LabelStmt l:
-				Line($"{l.Label}:");
+			case ContinueStmt:
+				Line("continue;" + Trailing(statement));
 				break;
 			case NewStmt n:
-				Line($"new {(n.TypeExpression != null ? "(" + Expr(n.TypeExpression) + ")" : n.TypeName)}({Args(n.Args)}) {{");
+				Line($"new {(n.TypeExpr != null ? "(" + Expr(n.TypeExpr) + ")" : n.TypeName)}({Args(n.Args)}) {{" + Trailing(statement));
 				Block(n.Body);
-				Line("}");
-				break;
-			case FunctionStmt f:
-				Function(f.Function);
+				Line("};");
 				break;
 			case CommentStmt c:
 				Line(c.Text);
@@ -134,56 +156,45 @@ public sealed class Printer
 		}
 	}
 
-	private static string Label(string? label) => label == null ? "" : label + ": ";
-
 	private string Trailing(Stmt statement) => Comments?.Trailing(statement) is { Length: > 0 } t ? " " + t : "";
 
-	private void If(IfStmt i, string keyword)
+	private void If(IfStmt i)
 	{
-		Line($"{keyword} ({Expr(i.Condition)}) {{" + Trailing(i));
-		Block(i.ThenBody);
-		if (i.ElseBody is [InlineStmt { Statement: IfStmt nested } inline])
+		Line($"if ({Expr(i.Condition)}) {{" + Trailing(i));
+		Block(i.Then);
+		if (i.Else is [IfStmt nested])
 		{
 			// The else-if's own comments go just above it, at the end of the branch before.
-			if (Comments != null) { _indent++; Comments.Before(inline, this); Comments.Before(nested, this); _indent--; }
+			if (Comments != null)
+			{
+				_indent++;
+				Comments.Before(nested, this);
+				_indent--;
+			}
 			_pendingPrefix = "} else ";
-			If(nested, "if");
+			If(nested);
 			return;
 		}
-		if (i.HasElse || i.ElseBody.Count > 0)
+		if (i.HasElse || i.Else.Count > 0)
 		{
 			Line("} else {");
-			Block(i.ElseBody);
+			Block(i.Else);
 		}
-		Line("}");
-	}
-
-	// "} else " written at the start of the next line (an else-if chain).
-	private string? _pendingPrefix;
-
-	public void Function(FunctionNode f)
-	{
-		Comments?.Before(f, this);
-		var name = f.ObjectName == null ? f.Name : f.ObjectName + "." + f.Name;
-		Line($"{(f.Public ? "public " : "")}function {name}({Args(f.Args)}) {{" + (Comments?.Trailing(f) is { Length: > 0 } t ? " " + t : ""));
-		Block(f.Body);
 		Line("}");
 	}
 
 	// ---- expressions ----
 
-	private string Args(List<Expr> args) => string.Join(", ", args.Select(a => Expr(a)));
+	private string Args(List<Expr> args) => string.Join(", ", args.Select(Expr));
 
-	private int Prec(Expr e) => PrecOf(Unfold(e));
-
-	private static int PrecOf(Expr e) =>
+	private static int Prec(Expr e) =>
 		e switch
 		{
 			BinaryExpr b => OpPrec(b.Op),
-			InExpr       => 6,
-			TernaryExpr  => 2,
+			SequenceExpr => 0,
+			InExpr => 6,
+			ConditionalExpr => 2,
 			UnaryExpr { Postfix: false } => 11,
-			StringCastExpr => 11,
 			_ => 12,
 		};
 
@@ -193,9 +204,9 @@ public sealed class Printer
 			"=" or ":=" or "+=" or "-=" or "*=" or "/=" or "^=" or "%=" or "@=" or "|=" or "&=" or "<<=" or ">>=" => 1,
 			"||" => 3,
 			"&&" => 4,
-			"&" or "|" or "xor" or "<<" or ">>" => 5,
-			"==" or "!=" or "=<" or "=>" => 6,
-			"<" or "<=" or ">" or ">=" => 7,
+			"&" or "|" or "<<" or ">>" or "xor" => 5,
+			"==" or "!=" => 6,
+			"<" or "<=" or ">" or ">=" or "=<" or "=>" => 7,
 			"@" or " " or "\n" or "\t" => 8,
 			"+" or "-" => 9,
 			"*" or "/" or "%" or "^" => 10,
@@ -206,7 +217,6 @@ public sealed class Printer
 
 	public string Expr(Expr e)
 	{
-		e = Unfold(e);
 		switch (e)
 		{
 			case BinaryExpr b:
@@ -218,39 +228,29 @@ public sealed class Printer
 			}
 			case InExpr i:
 			{
-				var left = Wrap(i.Expression, Prec(i.Expression) < 6);
-				if (i.Upper == null) return $"{left} in {Wrap(i.Lower, Prec(i.Lower) <= 7)}";
-				return $"{left} in {(i.LowerExclusive ? "<" : "|")}{Expr(i.Lower)}, {Expr(i.Upper)}{(i.UpperExclusive ? ">" : "|")}";
+				var left = Wrap(i.Value, Prec(i.Value) < 6);
+				if (i.High == null) return $"{left} in {Wrap(i.Low, Prec(i.Low) <= 7)}";
+				return $"{left} in {(i.LowExclusive ? "<" : "|")}{Wrap(i.Low, Prec(i.Low) < 8)}, {Wrap(i.High, Prec(i.High) < 8)}{(i.HighExclusive ? ">" : "|")}";
 			}
-			case TernaryExpr t:
-				return $"{Wrap(t.Condition, Prec(t.Condition) <= 2)} ? {Expr(t.WhenTrue)} : {Wrap(t.WhenFalse, Prec(t.WhenFalse) < 2)}";
+			case ConditionalExpr t:
+				return $"{Wrap(t.Condition, Prec(t.Condition) <= 2)} ? {Expr(t.Then)} : {Wrap(t.Else, Prec(t.Else) < 2)}";
 			case UnaryExpr { Postfix: true } u:
-				return Wrap(u.Expression, Prec(u.Expression) < 12) + u.Op;
+				return Wrap(u.Operand, Prec(u.Operand) < 12) + u.Op;
 			case UnaryExpr u:
 			{
-				var inner = Wrap(u.Expression, Prec(u.Expression) < 11);
+				var inner = Wrap(u.Operand, Prec(u.Operand) < 11);
 				// "- -x" and "--x" differ; "!-x" is fine.
-				if ((u.Op == "-" && inner.StartsWith('-')) || (u.Op == "+" && inner.StartsWith('+'))) inner = "(" + Expr(u.Expression) + ")";
+				if (u.Op is "-" or "+" && inner.StartsWith(u.Op[0])) inner = "(" + Expr(u.Operand) + ")";
 				return u.Op + inner;
 			}
-			case StringCastExpr s:
-				return "@" + Wrap(s.Expression, Prec(s.Expression) < 11);
-			case CastExpr c:
-				return $"{c.Type}({Expr(c.Expression)})";
 			case MemberExpr m:
-				return $"{Wrap(m.Object, Prec(m.Object) < 12 || m.Object is NumberExpr)}.{m.Name}";
+				return $"{Wrap(m.Target, Prec(m.Target) < 12 || m.Target is NumberExpr)}.{m.Name}";
 			case DynamicMemberExpr d:
-				return $"{Wrap(d.Object, Prec(d.Object) < 12)}.({Expr(d.Name)})";
-			case DynamicVarExpr v:
-				return $"makevar({Expr(v.Name)})";
-			case ArrayIndexExpr a:
-				return $"{Wrap(a.Target, Prec(a.Target) < 12)}[{Expr(a.Index)}]";
-			case MultiArrayIndexExpr m:
-				return $"{Wrap(m.Target, Prec(m.Target) < 12)}[{Args(m.Indices)}]";
-			case IdentifierExpr id:
+				return $"{Wrap(d.Target, Prec(d.Target) < 12 || d.Target is NumberExpr)}.({Expr(d.Name)})";
+			case IndexExpr a:
+				return $"{Wrap(a.Target, Prec(a.Target) < 12)}[{Args(a.Indices)}]";
+			case NameExpr id:
 				return id.Name;
-			case EnumExpr en:
-				return $"{en.EnumName}.{en.MemberName}";
 			case NumberExpr n:
 				return n.Text;
 			case StringExpr s:
@@ -261,23 +261,23 @@ public sealed class Printer
 				return "null";
 			case CallExpr c:
 				return $"{c.Name}({Args(c.Args)})";
-			case ChainedCallExpr c:
-				return $"({Expr(c.Call)})({Args(c.Args)})";
 			case MethodCallExpr m:
-				return $"{Wrap(m.Object, Prec(m.Object) < 12 || m.Object is NumberExpr)}.{m.Name}({Args(m.Args)})";
-			case DynamicMethodCallExpr d:
-				return $"{Wrap(d.Object, Prec(d.Object) < 12)}.({Expr(d.Name)})({Args(d.Args)})";
-			case NewObjectExpr n:
-				return $"new {(n.TypeExpression != null ? "(" + Expr(n.TypeExpression) + ")" : n.TypeName)}({Args(n.Args)})";
+				return $"{Wrap(m.Target, Prec(m.Target) < 12 || m.Target is NumberExpr)}.{m.Name}({Args(m.Args)})";
+			case DynamicCallExpr d:
+				return d.Callee is DynamicMemberExpr ? $"{Expr(d.Callee)}({Args(d.Args)})" : $"({Expr(d.Callee)})({Args(d.Args)})";
+			case NewExpr n:
+				return $"new {(n.TypeExpr != null ? "(" + Expr(n.TypeExpr) + ")" : n.TypeName)}({Args(n.Args)})";
+			case SequenceExpr q:
+				return string.Join(", ", q.Items.Select(i => Wrap(i, Prec(i) < 1)));
 			case NewArrayExpr n:
-				return "new" + string.Concat(n.Dimensions.Select(d => "[" + Expr(d) + "]"));
-			case ArrayLiteralExpr a:
-				return "{" + Args(a.Values) + "}";
-			case LambdaExpr l:
+				return "new" + string.Concat(n.Sizes.Select(d => "[" + Expr(d) + "]"));
+			case ArrayExpr a:
+				return "{" + Args(a.Items) + "}";
+			case FunctionExpr l:
 			{
-				var inner = new Printer { Indent = Indent, Folds = Folds };
+				var inner = new Printer { Indent = Indent };
 				inner.Statements(l.Body);
-				return $"function({Args(l.Args)}) {{ {inner.ToString().Replace("\n", " ").Trim()} }}";
+				return $"function({string.Join(", ", l.Params)}) {{ {inner.ToString().Replace("\n", " ").Trim()} }}";
 			}
 			default:
 				throw new NotSupportedException("expression " + e.GetType().Name);

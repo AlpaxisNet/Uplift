@@ -5,6 +5,5 @@ dist/
 .vs/
 .idea/
 TestResults/
-# The compiler is private: only vendor/README.md is public.
-/vendor/*
-!/vendor/README.md
+# Local tools, not part of Uplift.
+/vendor/

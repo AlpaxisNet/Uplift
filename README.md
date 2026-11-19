@@ -8,16 +8,18 @@
 
 Uplift opens a server folder, finds every script in it, and shows which ones are GS1, GS2 or broken. You tick what to convert,
 preview every file before and after, side by side, and then convert. It comes as a window (light and dark themes) and as a
-command line for scripts and automation. It is written in C# for .NET 10 and runs on Windows, Linux and macOS.
+command line for scripts and automation. It is written in C# for .NET 10, has no other dependencies, and runs on Windows,
+Linux and macOS.
 
-- **It reads scripts the way the server does.** A script means the same thing to Uplift as it does to the GS2 compiler it is
-  built on.
-- **It proves every result.** A conversion is only written when its output parses back to exactly the code it was printed
-  from and passes a strict GS2 check.
+- **It reads GS1 and GS2 itself.** A hand-written parser reads both languages, including GS1's old forms: commands with bare
+  arguments, `#` message codes, text arguments, and the comparing `=`.
+- **It proves every result.** A conversion is only written when its output parses back to exactly the tree it was printed
+  from, and passes a strict GS2 check.
 - **It changes nothing it doesn't have to.** Comments are kept. Everything in a file outside the converted scripts stays
   byte for byte, line endings included.
 - **It explains itself.** Every run writes a report: each part, what it was, what was done to it, what it is now, and why.
-- **You can extend it** with rules, regex fixes, file formats and plugins.
+- **You can extend it** with rules, regex fixes, GS1 commands, file formats and plugins.
+- **It's fast.** A server with about 13,700 script files is scanned in a second or two and converted in about four seconds.
 
 ## Contents
 
@@ -102,25 +104,35 @@ The report has four files:
   `actionfoo`, ...) set to true. GS2 has one function per event, so the main code has to be specialised for each event. The
   flags are folded to true or false, the dead branches dropped, and no call with side effects may be lost. If the script
   already has a function for an event, it runs after the main code, so the two are merged.
-- **Comparison with `=`.** Inside a condition, `=` compares.
-- **Old syntax.** Old commands take bare arguments (`setimg door.png;`) and message codes (`#c`, `#p(0)`, `#v(...)`) have
-  to be read. `with` blocks on players and `players[0]` mean something different in GS2.
+- **Comparison with `=`.** In a GS1 condition, `=` compares, and it binds after `&&` and `||`: `a && b = c` is
+  `(a && b) == c`.
+- **Old syntax.** Commands take bare text arguments (`setimg door.png;`). The last text argument runs to the `;`, commas
+  included, and quotes and `//` inside it are text. Message codes (`#c`, `#p(0)`, `#v(...)`, `#3(-1)`) have to be read.
+  `with` blocks on players and `players[0]` mean something different in GS2.
 - **Strings and comments** must not change, and every comment has to stay with its statement.
 
-So Uplift parses each part with the compiler's own GS1 and GS2 grammars (ANTLR). It uses regular expressions only where
-they are safe: *text fixes* on the converted GS2 code, which never touch strings or comments.
+So Uplift parses every part into a syntax tree. It uses regular expressions only where they are safe: *text fixes* on the
+converted GS2 code, which never touch strings or comments.
 
 **The steps:**
 
-1. **Read.** Each file is read with the server's rules. For a level, the NPC blocks; for a weapon or database NPC, the
-   script between its start and end lines; for a class, the whole file; for a gani, its `SCRIPT` block. Each script is split
-   at its first real `//#CLIENTSIDE` marker. A marker inside a string or a comment doesn't count.
-2. **Classify.** A part that already passes the strict GS2 check is left alone. One that compiles neither as GS1 nor as
-   GS2 is reported as broken.
-3. **Convert.** A GS1 part is parsed into a syntax tree, normalised, and rewritten by the enabled rules. Its main code is
-   specialised for each event into `function onX()` handlers, and it is printed as GS2 with its comments.
-4. **Prove.** The printed text must parse back to the same compiled code as the tree it came from, compile as GS2, and show
-   none of the signs of GS1. Otherwise the part is left as it was and the report says why.
+1. **Read the file.** Each file is read with the server's rules. For a level, the NPC blocks; for a weapon or database NPC,
+   the script between its start and end lines; for a class, the whole file; for a gani, its `SCRIPT` block. Each script is
+   split at its first real `//#CLIENTSIDE` marker. A marker inside a string or a comment doesn't count.
+2. **Decide the language of each part:**
+   - **GS2:** the part parses as GS2 and has none of GS1's signs. It is left alone. The signs are:
+     - a `//#GS1` marker;
+     - an event flag (`created`, `playerenters`, `timeout`, `actionX` ...) tested outside functions;
+     - an old command alone outside functions (`hide;`).
+   - **GS2 with GS1 main code:** the part's functions are GS2 (they use syntax GS1 doesn't have: quoted text, `@`, `SPC`,
+     method calls, `?:`, parameters ...). The code outside functions is read with GS1's rules, and so is any single
+     statement inside a function that isn't GS2.
+   - **GS1:** anything else that parses with GS1's rules.
+   - **Broken:** a part that parses in none of these ways is reported and left as it is.
+3. **Convert.** The tree is normalised, then rewritten by the enabled rules. Its main code is specialised for each event into
+   `function onX()` handlers, and it is printed as GS2 with its comments.
+4. **Prove.** The printed text must parse as GS2 back to the same tree, and pass the strict GS2 check. Otherwise the part is
+   left as it was and the report says why.
 5. **Fix.** The enabled text fixes run. A fix that would break the strict check is left out.
 6. **Write.** Only the replaced scripts change. Every other byte of the file stays as it was: 8-bit text is kept as it is,
    and each line keeps its `\r\n` or `\n`.
@@ -137,6 +149,8 @@ This file is optional and lives in the server's folder. `uplift-cli init` writes
   "customEvents": ["openshop"],
   "scanCustomEvents": true,
   "rules": { "command-typos": false },
+  "gs1Commands": { "givegralats": "N", "setmyflag": "VT" },
+  "gs1Functions": { "myfunc": "TN" },
   "textRules": [
     {
       "id": "rename-helper",
@@ -158,6 +172,7 @@ This file is optional and lives in the server's folder. `uplift-cli init` writes
 | `folders` | Where each kind of script lives, if not in the standard folders. |
 | `customEvents`, `scanCustomEvents` | GS1 scripts send events by name (`callnpc`, `callweapon`, `trigger`, `scheduleevent`), and the receiving script tests the name as a flag. Uplift finds the names the scripts send, so `if (openshop)` becomes `function onOpenShop()` and is not read as a variable. Add any it cannot find. |
 | `rules` | Rules and text fixes switched on (`true`) or off (`false`) by id. |
+| `gs1Commands`, `gs1Functions` | GS1 commands (or functions with text arguments) that the standard set lacks, with the kind of each argument: `T` text, `N` number, `V` a variable's name, `D` a direction (up, left, down, right). A command's last `T` argument takes the rest of the statement. |
 | `textRules` | Your own regular-expression fixes of GS2 code. |
 | `events` | More GS1 event flags and the GS2 function each becomes. |
 | `plugins` | Plugin assemblies (relative to the server's folder, or absolute). |
@@ -172,7 +187,7 @@ such as a bug fix or a rewrite for engines that read something differently. The 
 | --- | --- |
 | `callnpc-self` | `callnpc(-1, "ev", ...)` (the current NPC) → `this.trigger("ev", ...)` |
 | `gs1-level-names` | `playerscount`, `npcscount`, `setani`, `setbow` in level NPCs' server code → `players.size()`, `npcs.size()`, `player.setani()`, `player.bowimg =` |
-| `self-message-codes` | `#3(-1)`, `#C0(-1)` ... (the NPC itself) → `this` |
+| `self-message-codes` | `players[-1]` (the NPC itself) → `this` |
 | `command-typos` | `drawoveplayer`, `dontblok` ... (bare words that did nothing) → the command |
 | `misspelt-events` | `playerenterslevel` ... (never true) → `onPlayerEnters` |
 
@@ -188,8 +203,9 @@ Your own text fixes go in `uplift.json` (`textRules`).
 
 **Plugins** are .NET assemblies with a public class that implements `Uplift.Plugins.IUpliftPlugin`. Put them in the
 `plugins` folder beside Uplift, or name them in `uplift.json`. A plugin can add:
-- rules (`IConversionRule`, with hooks on expressions and statements);
+- rules (`IConversionRule`, with hooks on the expressions and statements of the syntax tree in `Uplift.Syntax`);
 - text fixes (`ITextFix`, or a ready-made `RegexTextFix`);
+- GS1 commands and functions (`AddGs1Command`, `AddGs1Function`);
 - event flags;
 - file formats (`IScriptFormat`).
 
@@ -204,12 +220,11 @@ Your own text fixes go in `uplift.json` (`textRules`).
 - **The notes in `parts.tsv`.** They say what changed in form or meaning: merged event functions, bug fixes, `with`
   blocks written with GS1's meaning, and `a && b = c`, which GS1 reads as `(a && b) == c`.
 - **Parts that were not converted.** Each has its reason. Convert them by hand and save the result as an override, so the
-  next run keeps it.
+  next run keeps it. A command the reason calls unknown can be added in `uplift.json` (`gs1Commands`).
 
 ## Building
 
-Uplift is built on a GS2 compiler that is **not open source and not part of this repository** (see
-[`vendor/README.md`](vendor/README.md)). With the compiler in place and the .NET 10 SDK installed:
+You need the .NET 10 SDK. Nothing else.
 
 ```bash
 dotnet build Uplift.slnx -c Release
@@ -227,13 +242,15 @@ without a screen. Set `UPLIFT_SCREENSHOTS=<folder>` to save the renders.
 
 | Path | What it is |
 | --- | --- |
-| `src/Uplift.Core` | Formats, the converter, rules and text fixes, the strict check, plugins, scans and conversions. No user interface. |
+| `src/Uplift.Core/Syntax` | The GS1 and GS2 lexer, parser and syntax tree, the GS1 command catalog, and the language decision. |
+| `src/Uplift.Core` | Also: formats, the converter, rules and text fixes, the strict check, plugins, scans and conversions. No user interface. |
 | `src/Uplift.Cli` | `uplift-cli`, the command line. |
 | `src/Uplift.Gui` | `Uplift`, the window (Avalonia, AvaloniaEdit). |
 | `samples/Uplift.Plugins.Sample` | An example plugin. |
-| `tests/Uplift.Tests` | Conversions, formats (unchanged files render byte for byte), a sample server, and the window. |
+| `tests/Uplift.Tests` | Parser, conversions, formats (unchanged files render byte for byte), a sample server, and the window. |
 | `scripts/publish.sh` | Self-contained builds for download. |
-| `vendor/` | Where the compiler goes (not included). |
 | `docs/` | The screenshots. |
 
-See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the code Uplift includes from other projects.
+The GS1 command and message-code catalog was built from GS1's public documentation, chiefly the Graal Bible pages *Old
+GScript*, *Starting Guide: Old script compatibility* and *GS1 To GS2*. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+for the code Uplift includes from other projects.

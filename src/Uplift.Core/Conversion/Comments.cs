@@ -1,16 +1,19 @@
-// The comments of a GS1 part (the GS1 lexer's hidden-channel tokens), each given to the statement it belongs to by source line:
-// a comment alone on its line(s) leads the next statement; a comment after code on its line trails the statement that starts there.
-
-using Antlr4.Runtime;
+// The comments of a part, each given to the statement it belongs to by source line: a comment alone on its line(s) leads the next
+// statement; a comment after code on its line trails the statement that starts there.
+using Uplift.Syntax;
 
 namespace Uplift.Conversion;
 
 public sealed class Comment(int line, int endLine, string text, bool trailing)
 {
 	public int Line { get; } = line;
+
 	public int EndLine { get; } = endLine;
+
 	public string Text { get; } = text;
+
 	public bool IsTrailing { get; } = trailing;
+
 	public bool Printed { get; set; }
 }
 
@@ -21,26 +24,17 @@ public sealed class Comments
 	private readonly Dictionary<object, List<Comment>> _trailing = new(ReferenceEqualityComparer.Instance);
 	private readonly Dictionary<object, object> _alias = new(ReferenceEqualityComparer.Instance);
 
-	public static Comments Collect(string code, Dictionary<object, (int Start, int Stop)> lines, bool gs2 = false)
+	public static Comments Collect(IEnumerable<SourceComment> source, Dictionary<object, (int Start, int Stop)> lines)
 	{
 		var result = new Comments();
-		var sourceLines = code.Replace("\r", "").Split('\n');
-		Lexer lexer = gs2 ? new GS2Lexer(CharStreams.fromString(code)) : new GS1Lexer(CharStreams.fromString(code));
-		lexer.RemoveErrorListeners();
-		foreach (var token in lexer.GetAllTokens())
+		foreach (var c in source.OrderBy(c => c.Start))
 		{
-			if (token.Channel != Lexer.Hidden) continue;
-			var text = token.Text;
-			if (!text.StartsWith("//", StringComparison.Ordinal) && !text.StartsWith("/*", StringComparison.Ordinal)) continue;
 			// Language markers are dropped: the converted part is GS2.
-			if (text.StartsWith("//#GS1", StringComparison.OrdinalIgnoreCase) || text.StartsWith("//#GS2", StringComparison.OrdinalIgnoreCase)) continue;
-			var line = token.Line;
-			var endLine = line + text.Count(c => c == '\n');
-			var before = line - 1 < sourceLines.Length ? sourceLines[line - 1][..Math.Min(token.Column, sourceLines[line - 1].Length)] : "";
-			result._all.Add(new Comment(line, endLine, text.TrimEnd(), before.Trim().Length > 0));
+			if (c.Text.StartsWith("//#GS1", StringComparison.OrdinalIgnoreCase) || c.Text.StartsWith("//#GS2", StringComparison.OrdinalIgnoreCase)) continue;
+			result._all.Add(new Comment(c.Line, c.EndLine, c.Text, c.Trailing));
 		}
 
-		// Owners: nodes by start line; for the same start line the one recorded first that spans the most lines (the outer one).
+		// Owners: nodes by start line; for the same start line the one that spans the most lines (the outer one).
 		var nodes = lines.Select(pair => (Node: pair.Key, pair.Value.Start, pair.Value.Stop)).OrderBy(n => n.Start).ThenByDescending(n => n.Stop - n.Start).ToList();
 		foreach (var comment in result._all)
 		{
@@ -48,7 +42,7 @@ public sealed class Comments
 			{
 				// The innermost node that starts on the comment's line, else the innermost that covers it.
 				var owner = nodes.Where(n => n.Start == comment.Line).OrderBy(n => n.Stop - n.Start).Select(n => n.Node).FirstOrDefault()
-					?? nodes.Where(n => n.Start <= comment.Line && comment.Line <= n.Stop).OrderBy(n => n.Stop - n.Start).Select(n => n.Node).FirstOrDefault();
+				            ?? nodes.Where(n => n.Start <= comment.Line && comment.Line <= n.Stop).OrderBy(n => n.Stop - n.Start).Select(n => n.Node).FirstOrDefault();
 				if (owner != null)
 				{
 					Add(result._trailing, owner, comment);
@@ -89,8 +83,6 @@ public sealed class Comments
 	}
 
 	private object Resolve(object node) => _alias.GetValueOrDefault(node, node);
-
-	public bool Has(object node) => _leading.ContainsKey(Resolve(node)) || _trailing.ContainsKey(Resolve(node));
 
 	public void Before(object node, Printer printer)
 	{

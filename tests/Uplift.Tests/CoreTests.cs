@@ -1,9 +1,9 @@
-using Alpaxis.Scripting.GSAst;
 using Uplift.Conversion;
 using Uplift.Formats;
 using Uplift.Jobs;
 using Uplift.Rules;
 using Uplift.Server;
+using Uplift.Syntax;
 using Uplift.Verification;
 using Xunit;
 
@@ -16,7 +16,7 @@ public sealed class CoreTests
 	private static PartResult Convert(string code, ScriptKind kind = ScriptKind.LevelNpc, ScriptSide side = ScriptSide.Server, ConversionOptions? options = null) =>
 		Workers.Run(() => new Gs1Converter(options).Convert(code, kind, side)).GetAwaiter().GetResult();
 
-	private static CheckResult Check(string code, ScriptKind kind = ScriptKind.LevelNpc) => Workers.Run(() => StrictCheck.Check(code, kind)).GetAwaiter().GetResult();
+	private static CheckResult Check(string code, ScriptKind kind = ScriptKind.LevelNpc) => Workers.Run(() => StrictCheck.Check(code)).GetAwaiter().GetResult();
 
 	[Fact]
 	public void MainCodeBecomesOneFunctionPerEvent()

@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
-using Alpaxis.Scripting.GSAst;
 using Uplift.Conversion;
+using Uplift.Syntax;
 
 namespace Uplift.Rules;
 
@@ -109,10 +109,10 @@ public sealed class CallNpcSelfRule : IConversionRule
 	public Expr? RewriteExpression(Expr expression, RuleContext context)
 	{
 		if (expression is not CallExpr { Name: var name, Args: [var index, .. var rest] } || !name.Equals("callnpc", StringComparison.OrdinalIgnoreCase)) return null;
-		if (index is not (NumberExpr { Text: "-1" } or UnaryExpr { Op: "-", Expression: NumberExpr { Text: "1" } }) || rest.Count == 0) return null;
+		if (index is not (NumberExpr { Text: "-1" } or UnaryExpr { Op: "-", Operand: NumberExpr { Text: "1" } }) || rest.Count == 0) return null;
 		if (TriggerArguments(rest) is not { } arguments) return null;
 		context.Note("callnpc(-1, ...) (the current NPC) written this.trigger(...)");
-		return new MethodCallExpr(new IdentifierExpr("this"), "trigger", arguments);
+		return new MethodCallExpr(new NameExpr("this"), "trigger", arguments);
 	}
 
 	/// <summary>
@@ -174,12 +174,12 @@ public sealed class Gs1LevelNamesRule : IConversionRule
 		if (!context.Gs1LevelServer) return null;
 		switch (expression)
 		{
-			case IdentifierExpr { Name: var n } when n.Equals("playerscount", StringComparison.OrdinalIgnoreCase):
-				return new MethodCallExpr(new IdentifierExpr("players"), "size", []);
-			case IdentifierExpr { Name: var n } when n.Equals("npcscount", StringComparison.OrdinalIgnoreCase):
-				return new MethodCallExpr(new IdentifierExpr("npcs"), "size", []);
+			case NameExpr { Name: var n } when n.Equals("playerscount", StringComparison.OrdinalIgnoreCase):
+				return new MethodCallExpr(new NameExpr("players"), "size", []);
+			case NameExpr { Name: var n } when n.Equals("npcscount", StringComparison.OrdinalIgnoreCase):
+				return new MethodCallExpr(new NameExpr("npcs"), "size", []);
 			case CallExpr { Name: var n } call when n.Equals("setani", StringComparison.OrdinalIgnoreCase) && !context.FunctionNames.Contains("setani"):
-				return new MethodCallExpr(new IdentifierExpr("player"), "setani", call.Args);
+				return new MethodCallExpr(new NameExpr("player"), "setani", call.Args);
 			default:
 				return null;
 		}
@@ -189,7 +189,7 @@ public sealed class Gs1LevelNamesRule : IConversionRule
 	{
 		if (!context.Gs1LevelServer) return null;
 		if (statement is ExprStmt { Expression: CallExpr { Name: var n, Args: [var bow] } } && n.Equals("setbow", StringComparison.OrdinalIgnoreCase) && !context.FunctionNames.Contains("setbow"))
-			return [new ExprStmt(new BinaryExpr(new MemberExpr(new IdentifierExpr("player"), "bowimg"), "=", bow))];
+			return [new ExprStmt(new BinaryExpr(new MemberExpr(new NameExpr("player"), "bowimg"), "=", bow))];
 		return null;
 	}
 }
@@ -206,9 +206,9 @@ public sealed class SelfMessageCodesRule : IConversionRule
 
 	public Expr? RewriteExpression(Expr expression, RuleContext context)
 	{
-		if (expression is not ArrayIndexExpr { Target: IdentifierExpr { Name: "players" }, Index: NumberExpr { Text: "-1" } or UnaryExpr { Op: "-", Expression: NumberExpr { Text: "1" } } }) return null;
+		if (expression is not IndexExpr { Target: NameExpr { Name: "players" }, Indices: [NumberExpr { Text: "-1" } or UnaryExpr { Op: "-", Operand: NumberExpr { Text: "1" } }] }) return null;
 		context.Note("players[-1] (the NPC itself in GS1) written as this");
-		return new IdentifierExpr("this");
+		return new NameExpr("this");
 	}
 }
 
@@ -230,7 +230,7 @@ public sealed class CommandTyposRule : IConversionRule
 
 	public IEnumerable<Stmt>? RewriteStatement(Stmt statement, RuleContext context)
 	{
-		if (statement is not ExprStmt { Expression: IdentifierExpr { Name: var word } } || !Typos.TryGetValue(word, out var command)) return null;
+		if (statement is not ExprStmt { Expression: NameExpr { Name: var word } } || !Typos.TryGetValue(word, out var command)) return null;
 		context.Note($"bug fix: '{word}' (a misspelt command, did nothing) is now {command}()");
 		return [new ExprStmt(new CallExpr(command, []))];
 	}

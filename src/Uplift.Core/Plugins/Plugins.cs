@@ -31,6 +31,10 @@ public sealed class UpliftRegistry
 
 	public IReadOnlyDictionary<string, string> Events => _events;
 
+	public Dictionary<string, string> Gs1Commands { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+	public Dictionary<string, string> Gs1Functions { get; } = new(StringComparer.OrdinalIgnoreCase);
+
 	public List<string> LoadedPlugins { get; } = [];
 
 	public List<string> PluginErrors { get; } = [];
@@ -58,6 +62,12 @@ public sealed class UpliftRegistry
 		_fixes.RemoveAll(f => f.Id == fix.Id);
 		_fixes.Add(fix);
 	}
+
+	/// <summary>Adds a GS1 command (or changes one) and its argument kinds: T text, N number, V variable, D direction.</summary>
+	public void AddGs1Command(string name, string argumentKinds) => Gs1Commands[name] = argumentKinds;
+
+	/// <summary>Adds a GS1 function with text or variable arguments.</summary>
+	public void AddGs1Function(string name, string argumentKinds) => Gs1Functions[name] = argumentKinds;
 
 	/// <summary>Adds a GS1 event flag and its GS2 function.</summary>
 	public void AddEvent(string gs1Flag, string gs2Function) => _events[gs1Flag] = gs2Function;

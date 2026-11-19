@@ -1,6 +1,5 @@
-using Alpaxis.Scripting.GS2Compiler;
-using Alpaxis.Scripting.GSAst;
 using Uplift.Rules;
+using Uplift.Syntax;
 using static Uplift.Conversion.Gs1Converter;
 
 namespace Uplift.Conversion;
@@ -35,7 +34,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 
 	public bool Zone;
 	public readonly List<string> Notes = [];
-	private readonly Dictionary<FunctionNode, List<object>> _origins = new(ReferenceEqualityComparer.Instance);
+	private readonly Dictionary<FunctionDecl, List<object>> _origins = new(ReferenceEqualityComparer.Instance);
 	private readonly Dictionary<string, string> _renamed = new(StringComparer.OrdinalIgnoreCase);
 	private readonly HashSet<string> _assigned = new(StringComparer.OrdinalIgnoreCase);
 	private readonly HashSet<string> _customFlags = new(StringComparer.OrdinalIgnoreCase);
@@ -51,8 +50,20 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		if (!Notes.Contains(text)) Notes.Add(text);
 	}
 
+	private T Keep<T>(object original, T made) where T : class
+	{
+		comments.Alias(made, original);
+		return made;
+	}
+
+	private object KeepAny(object original, object made)
+	{
+		comments.Alias(made, original);
+		return made;
+	}
+
 	private static bool IsPlayerTarget(Expr target) => target is CallExpr { Name: "findplayer" or "getplayer" or "findplayer2" or "findplayerbycommunityname" }
-		or ArrayIndexExpr { Target: IdentifierExpr { Name: "players" or "allplayers" } };
+		or IndexExpr { Target: NameExpr { Name: "players" or "allplayers" } };
 
 	/// <summary>
 	///     GS1's with (players[i]) / with (getplayer(x)) changes the current player only: the player's commands, #a and the player's
@@ -67,22 +78,18 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		{
 			if (s is WithStmt w && IsPlayerTarget(w.Target))
 			{
-				CheckWithPlayerBody(w.Body, w.Target is ArrayIndexExpr { Target: IdentifierExpr { Name: "players" } });
+				CheckWithPlayerBody(w.Body, w.Target is IndexExpr { Target: NameExpr { Name: "players" } });
 				var inner = new Rewriter(
 					expr: e => e switch
 					{
-						IdentifierExpr { Name: "player" } => new IdentifierExpr("this"),
-						IdentifierExpr { Name: "this" } => new IdentifierExpr("thiso"),
-						IdentifierExpr { Name: "client" or "clientr" } c => new MemberExpr(new IdentifierExpr("this"), c.Name),
-						IdentifierExpr { Name: "thiso" or "playero" } => throw new UnconvertibleException("thiso/playero inside a GS1 with-player block"),
+						NameExpr { Name: "player" } => new NameExpr("this"),
+						NameExpr { Name: "this" } => new NameExpr("thiso"),
+						NameExpr { Name: "client" or "clientr" } c => new MemberExpr(new NameExpr("this"), c.Name),
+						NameExpr { Name: "thiso" or "playero" } => throw new UnconvertibleException("thiso/playero inside a GS1 with-player block"),
 						_ => null,
 					},
-					stmt: st => st is WithStmt or FunctionStmt ? throw new UnconvertibleException("with inside a GS1 with-player block") : null,
-					keep: (o, m) =>
-					{
-						comments.Alias(m, o);
-						return m;
-					});
+					stmt: st => st is WithStmt ? throw new UnconvertibleException("with inside a GS1 with-player block") : null,
+					keep: KeepAny);
 				var newBody = inner.Statements(w.Body);
 				var made = ReferenceEquals(newBody, w.Body) ? w : w with { Body = newBody };
 				if (!ReferenceEquals(made, w))
@@ -94,11 +101,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 				result.Add(made);
 				continue;
 			}
-			var rebuilt = new Rewriter(stmt: st => st is WithStmt ws && IsPlayerTarget(ws.Target) ? WithPlayer([st]) : null, keep: (o, m) =>
-			{
-				comments.Alias(m, o);
-				return m;
-			}).Statements([s]);
+			var rebuilt = new Rewriter(stmt: st => st is WithStmt ws && IsPlayerTarget(ws.Target) ? WithPlayer([st]) : null, keep: KeepAny).Statements([s]);
 			if (rebuilt.Count != 1 || !ReferenceEquals(rebuilt[0], s)) changed = true;
 			result.AddRange(rebuilt);
 		}
@@ -114,8 +117,8 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		"addweapon", "removeweapon", "setlevel2", "setlevel", "freezeplayer", "freezeplayer2", "unfreezeplayer", "disableweapons", "enableweapons",
 		"say2", "say", "sethead", "setsword", "setshield", "setgender", "setskincolor", "setcoatcolor", "setsleevecolor", "setshoecolor", "setbeltcolor",
 		// functions that read only their arguments
-		"strequals", "strlen", "startswith", "strcontains", "indexof", "lindexof", "int", "float", "abs", "random", "format", "min", "max", "sin", "cos",
-		"arctan", "getangle", "vecx", "vecy", "arraylen", "sarraylen", "char", "keyname", "findplayer", "findnpc",
+		"strequals", "strlen", "startswith", "strcontains", "contains", "indexof", "lindexof", "int", "float", "abs", "random", "format", "min", "max", "sin",
+		"cos", "arctan", "getangle", "vecx", "vecy", "arraylen", "sarraylen", "char", "keyname", "findplayer", "findnpc", "makevar",
 	};
 
 	// level inside the block: the NPC's level or the player's; the same level when the target is one of the level's players.
@@ -124,9 +127,9 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		{
 			switch (e)
 			{
-				case IdentifierExpr { Name: "level" } when levelPlayer:
+				case NameExpr { Name: "level" } when levelPlayer:
 					break;
-				case IdentifierExpr { Name: var n } when !WithRoots.Contains(n):
+				case NameExpr { Name: var n } when !WithRoots.Contains(n):
 					throw new UnconvertibleException($"with-player block uses '{n}' (GS1: the NPC's or the script's; GS2: looked up on the player first)");
 				case CallExpr { Name: var c } when !WithCalls.Contains(c):
 					throw new UnconvertibleException($"with-player block calls {c}() (GS1: the NPC's command; GS2: the player's first)");
@@ -136,13 +139,14 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 
 	private const string WithNote = "with-player blocks written with GS1's meaning (player → this, the NPC's this → thiso)";
 
-	public ProgramNode Convert(ProgramNode program)
+	public Script Convert(Script script)
 	{
-		var functions = program.Items.OfType<FunctionItem>().Select(f => f.Function).ToList();
-		var main = program.Items.OfType<StatementItem>().SelectMany(s => s.Statement is BlockStmt b ? b.Body : [s.Statement]).ToList();
+		var functions = script.Items.OfType<FunctionDecl>().ToList();
+		var declarations = script.Items.Where(i => i is ConstDecl or EnumDecl).ToList();
+		var main = script.Items.OfType<StatementItem>().SelectMany(s => s.Statement is BlockStmt b ? b.Body : [s.Statement]).ToList();
 		// Names the script defines for itself that GS2 reserves are renamed.
 		foreach (var f in functions)
-			if (IsReserved(f.Name) || !Identifier.IsMatch(f.Name) || UpliftAccess.IsBuiltInCall(f.Name.ToLowerInvariant()) || UpliftAccess.IsBuiltInCall(f.Name))
+			if (IsReserved(f.Name) || !Identifier.IsMatch(f.Name) || IsBuiltIn(f.Name))
 			{
 				var name = Identifier.IsMatch(f.Name) ? f.Name + "Fn" : throw new UnconvertibleException("function name " + f.Name);
 				_renamed[f.Name] = name;
@@ -151,19 +155,19 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 
 		Walk(main.Concat(functions.SelectMany(f => f.Body)).ToList(), e =>
 		{
-			if (e is BinaryExpr { Left: IdentifierExpr { Name: var an }, Op: "=" or "+=" or "-=" or "@=" or "*=" or "/=" }) _assigned.Add(an);
-			if (e is UnaryExpr { Op: "++" or "--", Expression: IdentifierExpr { Name: var un } }) _assigned.Add(un);
-			if (e is DynamicVarExpr { Name: StringExpr { Value: var dv } }) _assigned.Add(dv);
+			if (e is BinaryExpr { Left: NameExpr { Name: var an }, Op: "=" or "+=" or "-=" or "@=" or "*=" or "/=" }) _assigned.Add(an);
+			if (e is UnaryExpr { Op: "++" or "--", Operand: NameExpr { Name: var un } }) _assigned.Add(un);
+			if (e is CallExpr { Name: "makevar", Args: [StringExpr { Value: var dv }] }) _assigned.Add(dv);
 		});
 		FindCustomEvents(main, functions);
 		// The GS1 grammar reads a comparing = after && and ||: if (a && b = 0) is if ((a && b) == 0). Kept, but worth a look.
-		Walk(main.Concat(functions.SelectMany(f => f.Body)).ToList(), e =>
-		{
-			if (e is BinaryExpr { Op: "=", Left: BinaryExpr { Op: "&&" or "||" } })
-				Note("GS1's comparing = binds after && and ||: a && b = c is (a && b) == c (the GS1 grammar's reading, kept as it is): check that the script meant it");
-		});
-		_context = new RuleContext(kind, client ? ScriptSide.Client : ScriptSide.Server, readAsGs1,
-			functions.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase), Notes);
+		if (readAsGs1)
+			Walk(main.Concat(functions.SelectMany(f => f.Body)).ToList(), e =>
+			{
+				if (e is BinaryExpr { Op: "=", Left: BinaryExpr { Op: "&&" or "||" } })
+					Note("GS1's comparing = binds after && and ||: a && b = c is (a && b) == c (kept as it is): check that the script meant it");
+			});
+		_context = new RuleContext(kind, client ? ScriptSide.Client : ScriptSide.Server, readAsGs1, functions.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase), Notes);
 		var normalizer = Normalizer(functions);
 		main = normalizer.Statements(main);
 		functions = functions.Select(f => Keep(f, f with { Name = _renamed.GetValueOrDefault(f.Name, f.Name), Body = normalizer.Statements(f.Body) })).ToList();
@@ -173,26 +177,27 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			functions = functions.Select(f => WithPlayer(f.Body) is var b && !ReferenceEquals(b, f.Body) ? Keep(f, f with { Body = b }) : f).ToList();
 		}
 
-		if (Uses(main, functions, e => e is IdentifierExpr { Name: var n } && (n.Equals("sparringzone", StringComparison.OrdinalIgnoreCase) || n.Equals("nopkzone", StringComparison.OrdinalIgnoreCase)))) Zone = true;
-		if (functions.Any(f => Uses(f.Body, [], e => e is IdentifierExpr { Name: var n } && Flag(n))))
+		if (Uses(main, functions, e => e is NameExpr { Name: var n } && (n.Equals("sparringzone", StringComparison.OrdinalIgnoreCase) || n.Equals("nopkzone", StringComparison.OrdinalIgnoreCase)))) Zone = true;
+		if (functions.Any(f => Uses(f.Body, [], e => e is NameExpr { Name: var n } && Flag(n))))
 			throw new UnconvertibleException("an event flag is tested inside a function (true while the event runs)");
 
 		// Joins outside any event stay at the top (GS2 runs them when the script starts).
 		var joins = main.Where(s => s is ExprStmt { Expression: CallExpr { Name: "join" } }).ToList();
-		main = main.Except(joins).ToList();
+		var joinSet = new HashSet<Stmt>(joins, ReferenceEqualityComparer.Instance);
+		main = main.Where(s => !joinSet.Contains(s)).ToList();
 
 		// The events the script tests, in the order they first appear; created and timeout are always delivered.
 		var tested = new List<string>();
 		Walk(main, e =>
 		{
-			if (e is IdentifierExpr { Name: var n } && Flag(n) && !tested.Contains(events.Canon(n), StringComparer.OrdinalIgnoreCase))
+			if (e is NameExpr { Name: var n } && Flag(n) && !tested.Contains(events.Canon(n), StringComparer.OrdinalIgnoreCase))
 				tested.Add(events.IsStandard(n) || n.StartsWith("action", StringComparison.OrdinalIgnoreCase) ? events.Canon(n) : n);
 		});
 		foreach (var t in tested)
 			if (events.CustomEvents.Contains(t) && !events.IsStandard(t)) Note($"'{t}' tested as an event (other scripts send it): on{char.ToUpperInvariant(t[0]) + t[1..]}()");
 		Walk(main, e =>
 		{
-			if (e is IdentifierExpr { Name: var tn } && events.IsMisspelling(tn)) Note("bug fix: misspelt playerenters (" + tn + ") is playerenters");
+			if (e is NameExpr { Name: var tn } && events.IsMisspelling(tn)) Note("bug fix: misspelt playerenters (" + tn + ") is playerenters");
 		});
 		var eventList = new List<string>(tested);
 		var timerSet = Uses(main, functions, e => e is CallExpr { Name: var c } && c.Equals("setTimer", StringComparison.OrdinalIgnoreCase));
@@ -206,13 +211,13 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		foreach (var s in unconditional)
 			if (IsIdempotentSetup(s, main, functions)) setupOnly.Add(s);
 
-		var handlers = new List<FunctionNode>();
+		var handlers = new List<FunctionDecl>();
 		foreach (var ev in eventList)
 		{
 			var body = Specialize(main, ev);
 			if (!ev.Equals("created", StringComparison.OrdinalIgnoreCase)) body = body.Where(s => !setupOnly.Contains(s)).ToList();
 			if (body.Count == 0) continue;
-			var handler = new FunctionNode(events.Function(ev), null, false, [], body);
+			var handler = new FunctionDecl(events.Function(ev), null, false, [], body);
 			_origins[handler] = OriginsOf(main, ev);
 			handlers.Add(handler);
 		}
@@ -224,17 +229,17 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			if (at < 0) continue;
 			var generated = handlers[at];
 			if (Returns(generated.Body)) throw new UnconvertibleException("main code that returns, and an event function of the same event: " + f.Name);
-			if (f.Args.Count > 0) throw new UnconvertibleException("event function with parameters and main code of the same event: " + f.Name);
+			if (f.Params.Count > 0) throw new UnconvertibleException("event function with parameters and main code of the same event: " + f.Name);
 			var merged = generated with { Name = f.Name, Body = [.. generated.Body, .. f.Body] };
 			_origins[merged] = _origins[generated];
 			comments.Alias(merged, f);
 			handlers[at] = merged;
-			functions.Remove(f);
+			functions.RemoveAll(x => ReferenceEquals(x, f));
 			Note($"main code of {f.Name} merged before the script's own {f.Name}");
 		}
 
 		// Same bodies: the later parameterless handler calls the earlier one.
-		var printedBodies = new Dictionary<string, FunctionNode>();
+		var printedBodies = new Dictionary<string, FunctionDecl>();
 		for (var i = 0; i < handlers.Count; i++)
 		{
 			var h = handlers[i];
@@ -265,32 +270,32 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			return r;
 		}).ToList();
 
-		var items = new List<ProgramItem>();
-		items.AddRange(joins.Select(j => new StatementItem(j)));
-		items.AddRange(handlers.Select(h => new FunctionItem(h)));
-		items.AddRange(functions.Select(f => new FunctionItem(f)));
+		var items = new List<Item>(declarations);
+		items.AddRange(joins.Select(j => Keep(j, new StatementItem(j))));
+		items.AddRange(handlers);
+		items.AddRange(functions);
 		if (handlers.Count == 0 && functions.Count == 0 && joins.Count == 0 && main.Count > 0) Note("every event body was empty: only the comments are left");
-		return new ProgramNode(program.Constants, program.Enums, items);
+		return new Script(items);
 	}
 
 	private bool Flag(string name) =>
 		(events.IsEventFlag(name) || _customFlags.Contains(name)) && (timeoutIsEvent || !name.Equals("timeout", StringComparison.OrdinalIgnoreCase));
 
 	// The custom events of this script: names other scripts send that this one only ever tests (each use a condition, never set).
-	private void FindCustomEvents(List<Stmt> main, List<FunctionNode> functions)
+	private void FindCustomEvents(List<Stmt> main, List<FunctionDecl> functions)
 	{
 		var total = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 		var atoms = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 		var all = main.Concat(functions.SelectMany(f => f.Body)).ToList();
 		Walk(all, e =>
 		{
-			if (e is IdentifierExpr { Name: var n }) total[n] = total.GetValueOrDefault(n) + 1;
+			if (e is NameExpr { Name: var n }) total[n] = total.GetValueOrDefault(n) + 1;
 		});
 		void Atoms(Expr c)
 		{
 			switch (c)
 			{
-				case IdentifierExpr { Name: var n }:
+				case NameExpr { Name: var n }:
 					atoms[n] = atoms.GetValueOrDefault(n) + 1;
 					break;
 				case BinaryExpr { Op: "&&" or "||" } b:
@@ -298,7 +303,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 					Atoms(b.Right);
 					break;
 				case UnaryExpr { Op: "!" } u:
-					Atoms(u.Expression);
+					Atoms(u.Operand);
 					break;
 			}
 		}
@@ -337,7 +342,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			var uses = false;
 			Walk([s], e =>
 			{
-				if (e is IdentifierExpr { Name: var n } && Flag(n) && events.SameEvent(n, ev)) uses = true;
+				if (e is NameExpr { Name: var n } && Flag(n) && events.SameEvent(n, ev)) uses = true;
 			});
 			if (uses) list.Add(s);
 		}
@@ -346,7 +351,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 
 	// ------------------------------------------------ normalization
 
-	private Rewriter Normalizer(List<FunctionNode> functions)
+	private Rewriter Normalizer(List<FunctionDecl> functions)
 	{
 		var context = _context!;
 		return new Rewriter(
@@ -364,39 +369,27 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 						return replaced.Select((r, i) => i == 0 ? Keep(s, r) : r).ToList();
 				return Core(s);
 			},
-			keep: (o, m) =>
-			{
-				comments.Alias(m, o);
-				return m;
-			});
+			keep: KeepAny);
 	}
 
 	/// <summary>What a GS1 expression means, written in GS2.</summary>
-	private Expr? Core(Expr e, List<FunctionNode> functions) => e switch
+	private Expr? Core(Expr e, List<FunctionDecl> functions) => e switch
 	{
 		// makevar("this.x") is the variable this.x; makevar("flag") (set/unset/setstring of a GS1 flag) is the player's flag.
-		DynamicVarExpr { Name: StringExpr { Value: var name } } when VariablePath(name) is { } path => path,
-		// Any other variable named at run time: makevar, which is what the GS1 reader's dynamic variable is.
-		DynamicVarExpr v => new CallExpr("makevar", [v.Name]),
-		// GS1's int() and float() are GS2's casts.
-		CallExpr { Name: "int" or "float", Args: [var castValue] } castCall => new CastExpr(castCall.Name, castValue),
-		// A member named by something that is not a GS2 name (this.2dstars, this.oldap#a) is the member of that name.
-		MemberExpr { Name: var memberName } badMember when !Identifier.IsMatch(memberName) && !memberName.All(char.IsAsciiDigit) => new DynamicMemberExpr(badMember.Object, new StringExpr(memberName)),
-		IdentifierExpr { Name: "NULL" or "null" } => new NullExpr(),
-		// class::function() is GS2's call of a class's function.
-		ChainedCallExpr { Call: IdentifierExpr { Name: var scoped } } chained when scoped.Contains("::") && scoped.LastIndexOf("::", StringComparison.Ordinal) is var cut && cut > 0 =>
-			new MethodCallExpr(new IdentifierExpr(scoped[..cut]), scoped[(cut + 2)..], chained.Args),
+		CallExpr { Name: "makevar", Args: [StringExpr { Value: var name }] } when VariablePath(name) is { } path => path,
+		NameExpr { Name: "NULL" } => new NullExpr(),
+		// 0x40 is written 64.
+		NumberExpr { Text: var hex } when hex.Length > 2 && hex[0] == '0' && hex[1] is 'x' or 'X' && long.TryParse(hex[2..], System.Globalization.NumberStyles.HexNumber, null, out var value) =>
+			new NumberExpr(value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
 		// GS1's =< and => are <= and >=.
 		BinaryExpr { Op: "=<" } le => le with { Op = "<=" },
 		BinaryExpr { Op: "=>" } ge => ge with { Op = ">=" },
-		// GS1's strtofloat is the float cast GS2 code gets for it (the GS2 reader's own translation).
-		CallExpr { Name: "strtofloat", Args: [var value] } => new CastExpr("float", value),
+		// GS1's strtofloat is the float cast.
+		CallExpr { Name: "strtofloat", Args: [var value] } => new CallExpr("float", [value]),
 		// strequals casts its arguments itself.
-		CallExpr { Name: "strequals", Args: [var a, var b] } c => c with { Args = [Uncast(a), Uncast(b)] },
-		CallExpr c when _renamed.TryGetValue(c.Name, out var renamed) => c with { Name = renamed },
-		// A call the GS1 reader marked as the script's own, of a function the script does not have, is an ordinary call.
-		CallExpr { IsScriptFunction: true } sc when !functions.Any(f => f.Name.Equals(sc.Name, StringComparison.OrdinalIgnoreCase)) => sc with { IsScriptFunction = false },
-		TernaryExpr t when Comparison(t.Condition) is var tc && !ReferenceEquals(tc, t.Condition) => t with { Condition = tc },
+		CallExpr { Name: "strequals", Args: [var a, var b] } c => Uncast(a) is var ua && Uncast(b) is var ub && (!ReferenceEquals(ua, a) || !ReferenceEquals(ub, b)) ? c with { Args = [ua, ub] } : null,
+		CallExpr c when _renamed.TryGetValue(c.Name, out var renamed) && (!IsBuiltIn(c.Name) || functions.Any(f => f.Name.Equals(c.Name, StringComparison.OrdinalIgnoreCase) && f.Params.Count == c.Args.Count)) => c with { Name = renamed },
+		ConditionalExpr t when Comparison(t.Condition) is var tc && !ReferenceEquals(tc, t.Condition) => t with { Condition = tc },
 		BinaryExpr { Op: "&&" or "||" } lb when Comparison(lb) is var lc && !ReferenceEquals(lc, lb) => lc,
 		UnaryExpr { Op: "!" } nu when Comparison(nu) is var nc && !ReferenceEquals(nc, nu) => nc,
 		_ => null,
@@ -408,15 +401,13 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		// In a GS1 condition, = compares.
 		IfStmt i when Comparison(i.Condition) is var c && !ReferenceEquals(c, i.Condition) => [Keep(s, i with { Condition = c })],
 		WhileStmt w when Comparison(w.Condition) is var c && !ReferenceEquals(c, w.Condition) => [Keep(s, w with { Condition = c })],
-		ForStmt f when Comparison(f.Condition) is var c && !ReferenceEquals(c, f.Condition) => [Keep(s, f with { Condition = c })],
-		// else { if ... } and else if are the same statement (the emitter runs an inline statement's inner one).
-		IfStmt { ElseBody: [IfStmt nested] } ei => [Keep(s, ei with { ElseBody = [new InlineStmt(nested)] })],
+		ForStmt { Condition: { } fc } f when Comparison(fc) is var c && !ReferenceEquals(c, fc) => [Keep(s, f with { Condition = c })],
 		// A read alone does nothing.
-		ExprStmt { Expression: MemberExpr or NumberExpr or StringExpr or ArrayIndexExpr or BoolExpr } read => Dropped(s, new Printer().Expr(read.Expression)),
+		ExprStmt { Expression: MemberExpr or NumberExpr or StringExpr or IndexExpr or BoolExpr } read => Dropped(s, new Printer().Expr(read.Expression)),
 		// timeout = x; is setTimer(x); (the engine: "like assigning timeout").
-		ExprStmt { Expression: BinaryExpr { Left: IdentifierExpr { Name: "timeout" }, Op: "=", Right: var delay } } => [Keep(s, new ExprStmt(new CallExpr("setTimer", [delay])))],
+		ExprStmt { Expression: BinaryExpr { Left: NameExpr { Name: "timeout" }, Op: "=", Right: var delay } } => [Keep(s, new ExprStmt(new CallExpr("setTimer", [delay])))],
 		// A bare word does nothing in GS1.
-		ExprStmt { Expression: IdentifierExpr { Name: var word } } when !events.IsEventFlag(word) && !word.Equals("sparringzone", StringComparison.OrdinalIgnoreCase) && !word.Equals("nopkzone", StringComparison.OrdinalIgnoreCase) => Dropped(s, word),
+		ExprStmt { Expression: NameExpr { Name: var word } } when !events.IsEventFlag(word) && !word.Equals("sparringzone", StringComparison.OrdinalIgnoreCase) && !word.Equals("nopkzone", StringComparison.OrdinalIgnoreCase) => Dropped(s, word),
 		_ => null,
 	};
 
@@ -425,22 +416,18 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 	///     with a player, players[0] is player; without one (created, timeout) the two lists agree. Any other fixed position in the list
 	///     depends on that order and is left for a person.
 	/// </summary>
-	private FunctionNode PlayerOrder(FunctionNode f, bool handler)
+	private FunctionDecl PlayerOrder(FunctionDecl f, bool handler)
 	{
 		if (!Gs1LevelServer) return f;
 		var withPlayer = handler && !NoPlayerEvents.Contains(f.Name);
 		var rewriter = new Rewriter(expr: e => e switch
 		{
-			ArrayIndexExpr { Target: IdentifierExpr { Name: "players" }, Index: NumberExpr { Text: "0" } } when withPlayer => new IdentifierExpr("player"),
-			ArrayIndexExpr { Target: IdentifierExpr { Name: "players" }, Index: NumberExpr { Text: "0" } } when !handler => throw new UnconvertibleException("players[0] in a function (whose event decides who it is)"),
-			ArrayIndexExpr { Target: IdentifierExpr { Name: "players" }, Index: var index } when index is not (NumberExpr { Text: "0" } or IdentifierExpr or MemberExpr or CastExpr { Expression: IdentifierExpr or MemberExpr }) =>
+			IndexExpr { Target: NameExpr { Name: "players" }, Indices: [NumberExpr { Text: "0" }] } when withPlayer => new NameExpr("player"),
+			IndexExpr { Target: NameExpr { Name: "players" }, Indices: [NumberExpr { Text: "0" }] } when !handler => throw new UnconvertibleException("players[0] in a function (whose event decides who it is)"),
+			IndexExpr { Target: NameExpr { Name: "players" }, Indices: [var index] } when index is not (NumberExpr { Text: "0" } or NameExpr or MemberExpr or CallExpr { Name: "float" or "int", Args: [NameExpr or MemberExpr] }) =>
 				throw new UnconvertibleException("players[" + new Printer().Expr(index) + "]: GS1 lists the event's player first"),
 			_ => null,
-		}, keep: (o, m) =>
-		{
-			comments.Alias(m, o);
-			return m;
-		});
+		}, keep: KeepAny);
 		var body = rewriter.Statements(f.Body);
 		return ReferenceEquals(body, f.Body) ? f : f with { Body = body };
 	}
@@ -457,12 +444,12 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		BinaryExpr { Op: "=" } b => b with { Op = "==", Left = Comparison(b.Left), Right = Comparison(b.Right) },
 		BinaryExpr { Op: "==" or "!=" or "<" or ">" or "<=" or ">=" or "+" or "-" or "*" or "/" or "%" or "@" } b when Comparison(b.Left) is var l && Comparison(b.Right) is var r && (!ReferenceEquals(l, b.Left) || !ReferenceEquals(r, b.Right)) => b with { Left = l, Right = r },
 		BinaryExpr { Op: "&&" or "||" } b when Comparison(b.Left) is var l && Comparison(b.Right) is var r && (!ReferenceEquals(l, b.Left) || !ReferenceEquals(r, b.Right)) => b with { Left = l, Right = r },
-		UnaryExpr { Op: "!" } u when Comparison(u.Expression) is var x && !ReferenceEquals(x, u.Expression) => u with { Expression = x },
-		TernaryExpr t when Comparison(t.Condition) is var c && !ReferenceEquals(c, t.Condition) => t with { Condition = c },
+		UnaryExpr { Op: "!" } u when Comparison(u.Operand) is var x && !ReferenceEquals(x, u.Operand) => u with { Operand = x },
+		ConditionalExpr t when Comparison(t.Condition) is var c && !ReferenceEquals(c, t.Condition) => t with { Condition = c },
 		_ => e,
 	};
 
-	private static Expr Uncast(Expr e) => e is StringCastExpr { Expression: MemberExpr or IdentifierExpr or ArrayIndexExpr } c ? c.Expression : e;
+	private static Expr Uncast(Expr e) => e is UnaryExpr { Op: "@", Operand: MemberExpr or NameExpr or IndexExpr } c ? c.Operand : e;
 
 	private Expr? VariablePath(string name)
 	{
@@ -472,18 +459,12 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		{
 			// A GS1 flag without a prefix: the player's (the account's unprefixed flags are the player's members).
 			if (!Identifier.IsMatch(parts[0]) || events.IsEventFlag(parts[0]) || client) return null;
-			return new MemberExpr(new IdentifierExpr("player"), parts[0]);
+			return new MemberExpr(new NameExpr("player"), parts[0]);
 		}
 		if (!Identifier.IsMatch(parts[0])) return null;
-		Expr e = new IdentifierExpr(parts[0]);
+		Expr e = new NameExpr(parts[0]);
 		foreach (var p in parts.Skip(1)) e = new MemberExpr(e, p);
 		return e;
-	}
-
-	private T Keep<T>(object original, T made) where T : class
-	{
-		comments.Alias(made, original);
-		return made;
 	}
 
 	// ------------------------------------------------ specialization
@@ -492,16 +473,12 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 	private List<Stmt> Specialize(List<Stmt> main, string ev)
 	{
 		var rewriter = new Rewriter(
-			expr: e => e is IdentifierExpr { Name: var n } && Flag(n) ? new BoolExpr(events.SameEvent(n, ev)) : null,
-			stmt: null, keep: (o, m) =>
-			{
-				comments.Alias(m, o);
-				return m;
-			}, fold: true, inherit: comments.Inherit);
+			expr: e => e is NameExpr { Name: var n } && Flag(n) ? new BoolExpr(events.SameEvent(n, ev)) : null,
+			stmt: null, keep: KeepAny, fold: true, inherit: comments.Inherit);
 		return rewriter.Statements(main);
 	}
 
-	private static bool IsIdempotentSetup(Stmt s, List<Stmt> main, List<FunctionNode> functions)
+	private static bool IsIdempotentSetup(Stmt s, List<Stmt> main, List<FunctionDecl> functions)
 	{
 		if (s is not ExprStmt { Expression: CallExpr call } || !SetupGroups.TryGetValue(call.Name, out var group)) return false;
 		if (!call.Args.All(IsConstant)) return false;
@@ -513,24 +490,23 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		return count == 1;
 	}
 
-	private static bool IsConstant(Expr e) => e is NumberExpr or StringExpr or BoolExpr or UnaryExpr { Op: "-", Expression: NumberExpr } || e is BinaryExpr { Op: "@" } b && IsConstant(b.Left) && IsConstant(b.Right);
+	private static bool IsConstant(Expr e) => e is NumberExpr or StringExpr or BoolExpr or UnaryExpr { Op: "-", Operand: NumberExpr } || e is BinaryExpr { Op: "@" } b && IsConstant(b.Left) && IsConstant(b.Right);
 
 	// ------------------------------------------------ printing
 
 	public void ResetComments() => comments.Reset();
 
-	public string Print(ProgramNode program, Dictionary<object, Expr>? folds)
+	public string Print(Script script)
 	{
-		var printer = new Printer { Comments = comments, Folds = folds };
+		var printer = new Printer { Comments = comments };
 		var first = true;
-		foreach (var item in program.Items)
+		foreach (var item in script.Items)
 		{
-			if (item is StatementItem s)
+			if (item is not FunctionDecl f)
 			{
-				printer.Statement(s.Statement);
+				printer.Item(item);
 				continue;
 			}
-			var f = ((FunctionItem)item).Function;
 			if (!first) printer.Blank();
 			first = false;
 			if (_origins.TryGetValue(f, out var origins))

@@ -5,14 +5,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <CompilerProject>$(MSBuildThisFileDirectory)..\..\vendor\Compiler\Uplift.Compiler.csproj</CompilerProject>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(CompilerProject)" Condition="Exists('$(CompilerProject)')" />
-    <PackageReference Include="Antlr4.Runtime.Standard" />
     <InternalsVisibleTo Include="Uplift.Tests" />
   </ItemGroup>
-  <Target Name="RequireCompiler" BeforeTargets="ResolveProjectReferences;CoreCompile" Condition="!Exists('$(CompilerProject)')">
-    <Error Text="The GS2 compiler Uplift is built on is not part of this repository: see vendor/README.md." />
-  </Target>
 </Project>

@@ -1,21 +1,13 @@
-// GS1 part → GS2 part. The part is read with the compiler's own GS1 front-end (the tree the compiler runs for the GS1 text),
-// the tree is normalized (constant variable names to variables, strtofloat to float(), timeout = x to setTimer(x), no-op bare words
-// kept as comments, then the enabled rules), and its main code is specialized per event: a GS1 script's main code runs once per
-// event with that event's flag true, so the handler of event E is the main code with E's flag true and every other flag false,
-// folded. Every output is proven: its printed text re-parses as GS2 to the same bytecode as the tree it was printed from, it has
-// none of the GS1 signs (the compiler's own ScriptLanguage), and it compiles as GS2.
+// GS1 part → GS2 part. The part is read into Uplift's syntax tree (as GS1, or as GS2 with GS1 main code), the tree is normalized
+// (comparing = to ==, timeout = x to setTimer(x), no-op bare words kept as comments, then the enabled rules), and its main code is
+// specialized per event: a GS1 script's main code runs once per event with that event's flag true, so the handler of event E is
+// the main code with E's flag true and every other flag false, folded. Every output is proven: its printed text parses as GS2 back
+// to the same tree it was printed from, and it is strict GS2 (no GS1 signs).
 using System.Text.RegularExpressions;
-using Alpaxis.Scripting.GS2Compiler;
-using Alpaxis.Scripting.GSAst;
 using Uplift.Rules;
+using Uplift.Syntax;
 
 namespace Uplift.Conversion;
-
-/// <summary>A comment line the converter writes (never emitted).</summary>
-public sealed record CommentStmt(string Text) : Stmt
-{
-	public override TResult Accept<TResult>(IAstVisitor<TResult> visitor) => throw new NotSupportedException();
-}
 
 /// <summary>A part the converter leaves as it is, and why.</summary>
 public sealed class UnconvertibleException(string reason) : Exception(reason);
@@ -44,7 +36,7 @@ public sealed record PartResult(PartStatus Status, string Text, IReadOnlyList<st
 	public static PartResult Fail(string reason) => new(PartStatus.Failed, "", [], reason);
 }
 
-/// <summary>How the converter works: the server's custom events and the rules.</summary>
+/// <summary>How the converter works: the server's custom events, the rules, the GS1 commands.</summary>
 public sealed class ConversionOptions
 {
 	/// <summary>Events the server's scripts send by name: a bare, never-assigned name of one tested outside functions is that event.</summary>
@@ -55,6 +47,9 @@ public sealed class ConversionOptions
 
 	/// <summary>More GS1 event flags and their GS2 functions.</summary>
 	public IReadOnlyDictionary<string, string> ExtraEvents { get; init; } = new Dictionary<string, string>();
+
+	/// <summary>The GS1 commands and functions (the standard ones, and the server's own).</summary>
+	public Gs1Catalog Catalog { get; init; } = Gs1Catalog.Default;
 }
 
 /// <summary>Converts GS1 parts to GS2. Thread-safe; each call needs a deep stack (see <see cref="Jobs.Workers" />).</summary>
@@ -68,13 +63,21 @@ public sealed class Gs1Converter
 		"break", "continue", "goto", "int", "float", "in", "true", "false", "null", "NULL", "xor", "NL", "SPC", "TAB", "_",
 	};
 
+	// Functions GS2 runs as built-ins: a script's own function of one of these names would never be called.
+	private static readonly HashSet<string> BuiltIns = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"sin", "cos", "arctan", "exp", "log", "abs", "random", "char", "int", "float", "min", "max", "pow", "getangle", "getdir", "vecx", "vecy",
+	};
+
 	private readonly EventTable _events;
 	private readonly IReadOnlyList<IConversionRule> _rules;
+	private readonly Gs1Catalog _catalog;
 
 	public Gs1Converter(ConversionOptions? options = null)
 	{
 		options ??= new ConversionOptions();
 		_rules = options.Rules;
+		_catalog = options.Catalog;
 		_events = new EventTable(options.CustomEvents, _rules.Any(r => r.Id == BuiltInRules.MisspeltEventsId), options.ExtraEvents);
 	}
 
@@ -83,71 +86,96 @@ public sealed class Gs1Converter
 	/// <summary>Converts one part (a server or client part, or a gani's script).</summary>
 	public PartResult Convert(string code, ScriptKind kind, ScriptSide side)
 	{
-		var target = kind.CompileTarget();
-		var client = side == ScriptSide.Client;
 		try
 		{
-			var auto = Interface.CompileCode(code, target, "npc", withHeader: false, grammar: ScriptGrammar.Auto);
-			if (auto.Success && auto.Grammar == ScriptGrammar.GS2 && !ScriptLanguage.HasLegacySyntax(code) && !ScriptLanguage.TestsGs1Event(code) && !ScriptLanguage.HasBareCommand(code))
-				return new(PartStatus.AlreadyGs2, "", [], "");
-			if (!auto.Success) return PartResult.Fail("does not compile as GS1 or GS2: " + FirstLine(auto.ErrMsg));
-			// Read the way the compiler reads it: GS1, or GS2 (with GS1's main-code rules when the part looked like GS1 and GS1 could not read it).
-			var asGs2 = auto.Grammar != ScriptGrammar.GS1;
-			var gs1MainCode = asGs2 && ScriptLanguage.LooksLikeGs1(code);
-			UpliftAccess.Lines = new(ReferenceEqualityComparer.Instance);
-			UpliftAccess.Folds = new(ReferenceEqualityComparer.Instance);
-			var (program, error) = asGs2 ? UpliftAccess.ParseGs2(code, gs1MainCode) : UpliftAccess.ParseGs1(code);
-			var lines = UpliftAccess.Lines;
-			var folds = UpliftAccess.Folds;
-			UpliftAccess.Lines = null;
-			UpliftAccess.Folds = null;
-			if (program == null) return PartResult.Fail("parse: " + FirstLine(error));
-			var comments = Comments.Collect(code, lines, asGs2);
-			var converter = new PartConverter(comments, client, _events, _rules, kind, readAsGs1: !asGs2, timeoutIsEvent: !asGs2 || gs1MainCode);
-			var gs2 = converter.Convert(program);
-			if (converter.Zone) return new(PartStatus.Kept, "", [], "level flag word (sparringzone/nopkzone): left as written, the client reads it by its text");
-			// Constant arithmetic is written as the author wrote it when GS2 folds it back to the same bytecode; else as the number.
-			var text = converter.Print(gs2, folds);
-			var (same, why) = Proof.Reparses(Strip(gs2), text);
-			if (!same && folds.Count > 0)
+			var read = Language.Read(code, _catalog);
+			switch (read.Reading)
 			{
-				converter.ResetComments();
-				text = converter.Print(gs2, null);
-				(same, why) = Proof.Reparses(Strip(gs2), text);
+				case Reading.Gs2:
+					return new(PartStatus.AlreadyGs2, "", [], "");
+				case Reading.Broken:
+					return PartResult.Fail("does not parse as GS1 or GS2: " + read.Error);
 			}
-			// Proof 1 (above): the text is exactly the tree.
-			if (!same) return PartResult.Fail("printer: " + why);
-			// Proof 2: GS2 in the compiler's eyes.
-			var check = Interface.CompileCode(text, target, "npc", withHeader: false, grammar: ScriptGrammar.Auto);
-			if (!check.Success || check.Grammar != ScriptGrammar.GS2) return PartResult.Fail("output not read as GS2: " + FirstLine(check.ErrMsg));
-			if (ScriptLanguage.HasLegacySyntax(text) || ScriptLanguage.TestsGs1Event(text) || ScriptLanguage.HasBareCommand(text) || ScriptLanguage.Marker(text) == ScriptGrammar.GS1)
-				return PartResult.Fail("output still has GS1 signs");
+			var script = read.Script!;
+			var gs1MainCode = read.Reading == Reading.Gs2WithGs1MainCode;
+			// GS1 main code in GS2 syntax: an old command alone is the command.
+			if (gs1MainCode) script = OldCommandsAreCalls(script);
+			var comments = Comments.Collect(read.Parse.Comments, read.Parse.Lines);
+			var converter = new PartConverter(comments, side == ScriptSide.Client, _events, _rules, kind, readAsGs1: !gs1MainCode, timeoutIsEvent: true);
+			var gs2 = converter.Convert(script);
+			if (converter.Zone) return new(PartStatus.Kept, "", [], "level flag word (sparringzone/nopkzone): left as written, the client reads it by its text");
+			var text = converter.Print(gs2);
+			// Proof 1: the text is exactly the tree.
+			var again = Parser.Parse(text, Dialect.Gs2, _catalog);
+			if (!again.Success) return PartResult.Fail("printer: the printed text does not parse as GS2: line " + again.ErrorLine + ": " + again.Error);
+			if (!SyntaxEquality.Equal(Strip(gs2), again.Script)) return PartResult.Fail("printer: the printed text does not read back as the same tree");
+			// Proof 2: strict GS2.
+			if (Language.Gs1SignsOf(again, _catalog) is { Count: > 0 } signs) return PartResult.Fail("output still has GS1 signs: " + signs[0]);
 			return new(PartStatus.Converted, text, converter.Notes, "");
 		}
 		catch (UnconvertibleException u)
 		{
 			return PartResult.Fail(u.Message);
 		}
-		catch (Exception e)
+		catch (Exception e) when (e is NotSupportedException or InvalidOperationException or ArgumentException or InsufficientExecutionStackException)
 		{
-			return PartResult.Fail("exception " + e.GetType().Name + ": " + FirstLine(e.Message));
-		}
-		finally
-		{
-			UpliftAccess.Lines = null;
-			UpliftAccess.Folds = null;
+			return PartResult.Fail("exception " + e.GetType().Name + ": " + e.Message.Split('\n')[0]);
 		}
 	}
 
-	private static string FirstLine(string? text) => (text ?? "").Replace("\r", "", StringComparison.Ordinal).Split('\n')[0];
+	// GS1 main code in GS2 syntax: an old command alone (hide;, sleep1;) is the command, in the main code and in the functions; GS1's
+	// player names (playerhearts) are the player's.
+	private Script OldCommandsAreCalls(Script script)
+	{
+		var rewriter = new Rewriter(
+			expr: e => e is NameExpr { Name: var name } && _catalog.LowerName(name, counts: false) is { } player ? player : null,
+			stmt: s => s is ExprStmt { Expression: NameExpr { Name: var word } } ? Command(word) is { } call ? [new ExprStmt(call)] : null : null);
+		var items = script.Items.Select(i => i switch
+		{
+			StatementItem s when rewriter.Statements([s.Statement]) is var r && (r.Count != 1 || !ReferenceEquals(r[0], s.Statement)) => new StatementItem(r.Count == 1 ? r[0] : new BlockStmt(r)),
+			FunctionDecl f when rewriter.Statements(f.Body) is var body && !ReferenceEquals(body, f.Body) => f with { Body = body },
+			_ => i,
+		}).ToList();
+		return new Script(items);
+	}
 
-	/// <summary>The tree without the converter's comment statements (for the emitter).</summary>
-	internal static ProgramNode Strip(ProgramNode program) =>
-		program with { Items = program.Items.Select(i => i is FunctionItem f ? new FunctionItem(f.Function with { Body = StripBody(f.Function.Body) }) : i).ToList() };
+	// A bare word that is an old command, or one written against its number (sleep1): the call.
+	private Expr? Command(string word)
+	{
+		if (_catalog.TryGetCommand(word, out _)) return new CallExpr(word, []);
+		for (var length = word.Length - 1; length >= 2; length--)
+			if (char.IsAsciiDigit(word[length]) && word[length..].All(c => char.IsAsciiDigit(c) || c == '.') && _catalog.TryGetCommand(word[..length], out var c) && c.Kinds.Length > 0)
+				return new CallExpr(word[..length], [new NumberExpr(word[length..])]);
+		return null;
+	}
+
+	/// <summary>The tree without the converter's comment statements (what printing then parsing gives back).</summary>
+	internal static Script Strip(Script script) =>
+		script with { Items = script.Items.Select(i => i is FunctionDecl f ? f with { Body = StripBody(f.Body) } : i).ToList() };
 
 	private static List<Stmt> StripBody(List<Stmt> body) => new Rewriter(stmt: s => s is CommentStmt ? [] : null).Statements(body);
 
 	internal static bool IsReserved(string name) => Reserved.Contains(name);
+
+	internal static bool IsBuiltIn(string name) => BuiltIns.Contains(name);
+
+	/// <summary>The names a condition tests (through &amp;&amp;, || and !).</summary>
+	public static IEnumerable<string> Atoms(Expr condition)
+	{
+		switch (condition)
+		{
+			case NameExpr { Name: var n }:
+				yield return n;
+				break;
+			case BinaryExpr { Op: "&&" or "||" } b:
+				foreach (var a in Atoms(b.Left)) yield return a;
+				foreach (var a in Atoms(b.Right)) yield return a;
+				break;
+			case UnaryExpr { Op: "!" } u:
+				foreach (var a in Atoms(u.Operand)) yield return a;
+				break;
+		}
+	}
 
 	public static void Walk(List<Stmt> body, Action<Expr> visit) => new Rewriter(expr: e =>
 	{
@@ -155,7 +183,7 @@ public sealed class Gs1Converter
 		return null;
 	}).Statements(body);
 
-	public static bool Uses(List<Stmt> main, List<FunctionNode> functions, Func<Expr, bool> test)
+	public static bool Uses(List<Stmt> main, List<FunctionDecl> functions, Func<Expr, bool> test)
 	{
 		var found = false;
 		Walk(main.Concat(functions.SelectMany(f => f.Body)).ToList(), e =>
@@ -163,44 +191,5 @@ public sealed class Gs1Converter
 			if (test(e)) found = true;
 		});
 		return found;
-	}
-}
-
-/// <summary>The printer's proof: a printed text re-parses as GS2 to the bytecode of the tree it was printed from.</summary>
-public static class Proof
-{
-	/// <summary>The bytecode of a tree emitted as GS2, or null when the emitter refuses it.</summary>
-	public static byte[]? Gs2Bytes(ProgramNode program)
-	{
-		try
-		{
-			return UpliftAccess.Emit(program, ScriptGrammar.GS2);
-		}
-		catch (Exception)
-		{
-			return null;
-		}
-	}
-
-	public static (bool Same, string Error) Reparses(ProgramNode program, string text)
-	{
-		var reference = Gs2Bytes(program);
-		if (reference == null) return (false, "reference tree does not emit");
-		var (again, error) = UpliftAccess.ParseGs2(text);
-		if (again == null) return (false, "printed text does not parse as GS2: " + error?.Split('\n')[0]);
-		var bytes = Gs2Bytes(again);
-		if (bytes == null) return (false, "printed text does not emit");
-		return bytes.AsSpan().SequenceEqual(reference) ? (true, "") : (false, "bytecode differs");
-	}
-
-	/// <summary>A tree printed as GS2 as it is (no specialization).</summary>
-	public static string Flat(ProgramNode program)
-	{
-		var printer = new Printer();
-		foreach (var item in program.Items)
-			if (item is FunctionItem f) printer.Function(f.Function);
-			else if (item is StatementItem { Statement: BlockStmt block }) printer.Statements(block.Body);
-			else if (item is StatementItem s) printer.Statement(s.Statement);
-		return printer.ToString();
 	}
 }

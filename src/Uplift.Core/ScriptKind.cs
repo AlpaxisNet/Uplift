@@ -65,8 +65,8 @@ public static class ScriptKinds
 		}
 	}
 
-	/// <summary>The script type the compiler is given (it only changes the bytecode's header).</summary>
-	public static string CompileTarget(this ScriptKind kind) => kind switch
+	/// <summary>The word a part's hash starts with (weapon, class, gani, npc), so a server's hand conversions keep their names.</summary>
+	public static string HashName(this ScriptKind kind) => kind switch
 	{
 		ScriptKind.Weapon => "weapon",
 		ScriptKind.Class  => "class",

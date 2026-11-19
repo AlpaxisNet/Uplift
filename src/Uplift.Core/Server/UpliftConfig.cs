@@ -32,6 +32,15 @@ public sealed class UpliftConfig
 	/// <summary>A folder of hand conversions: &lt;hash&gt;.gs2 replaces the part of that hash, &lt;hash&gt;.keep leaves it as it is.</summary>
 	public string? Overrides { get; set; }
 
+	/// <summary>
+	///     GS1 commands the standard set lacks, and the kind of each argument ("givegralats": "N"): T text, N number, V a variable's
+	///     name, D a direction; a command's last text argument takes the rest of the statement.
+	/// </summary>
+	public Dictionary<string, string>? Gs1Commands { get; set; }
+
+	/// <summary>GS1 functions with text or variable arguments the standard set lacks ("myfunc": "TN").</summary>
+	public Dictionary<string, string>? Gs1Functions { get; set; }
+
 	/// <summary>More GS1 event flags and their GS2 functions ("myevent": "onMyEvent").</summary>
 	public Dictionary<string, string>? Events { get; set; }
 

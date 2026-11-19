@@ -6,6 +6,5 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Uplift.Core\Uplift.Core.csproj" Private="false" />
-    <ProjectReference Include="..\..\vendor\Compiler\Uplift.Compiler.csproj" Private="false" Condition="Exists('..\..\vendor\Compiler\Uplift.Compiler.csproj')" />
   </ItemGroup>
 </Project>

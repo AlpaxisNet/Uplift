@@ -1,8 +1,8 @@
 // An example of each thing a plugin can add. Copy this project, rename it, and change what the rules do.
-using Alpaxis.Scripting.GSAst;
 using Uplift;
 using Uplift.Plugins;
 using Uplift.Rules;
+using Uplift.Syntax;
 
 namespace Uplift.Plugins.Sample;
 
@@ -30,6 +30,9 @@ public sealed class SamplePlugin : IUpliftPlugin
 
 		// A GS1 event flag the server's own engine sends, and the GS2 function it becomes.
 		registry.AddEvent("playerjoinsguild", "onPlayerJoinsGuild");
+
+		// A GS1 command of the server's own, with bare arguments: givegralats 5; (N: a number).
+		registry.AddGs1Command("givegralats", "N");
 	}
 }
 
@@ -52,6 +55,6 @@ public sealed class GiveGralatsRule : IConversionRule
 		if (context.FunctionNames.Contains("givegralats")) return null;
 		if (context.Side == ScriptSide.Client) context.Refuse("givegralats in client code (the server's helper is server-side)");
 		context.Note("givegralats(...) written player.addGralats(...)");
-		return new MethodCallExpr(new IdentifierExpr("player"), "addGralats", call.Args);
+		return new MethodCallExpr(new NameExpr("player"), "addGralats", call.Args);
 	}
 }

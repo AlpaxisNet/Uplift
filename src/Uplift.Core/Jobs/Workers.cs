@@ -1,7 +1,7 @@
 namespace Uplift.Jobs;
 
 /// <summary>
-///     Threads with deep stacks: the compiler's parsers recurse once per nesting level of a script, and some scripts nest deeply. Each
+///     Threads with deep stacks: the parser recurses once per nesting level of a script, and some scripts nest deeply. Each
 ///     worker thread reserves <see cref="StackSize" /> of address space (only what is used is ever committed).
 /// </summary>
 public static class Workers

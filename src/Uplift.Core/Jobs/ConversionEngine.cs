@@ -26,7 +26,8 @@ public sealed class ConversionEngine
 		var switches = options.Switches ?? workspace.DefaultSwitches();
 		Rules = workspace.Registry.Rules.Where(r => switches.Contains(r.Id)).ToList();
 		_fixes = workspace.Registry.TextFixes.Where(f => switches.Contains(f.Id)).ToList();
-		_converter = new Gs1Converter(new ConversionOptions { CustomEvents = customEvents, Rules = Rules, ExtraEvents = workspace.Registry.Events });
+		Catalog = workspace.Catalog;
+		_converter = new Gs1Converter(new ConversionOptions { CustomEvents = customEvents, Rules = Rules, ExtraEvents = workspace.Registry.Events, Catalog = Catalog });
 		if (workspace.OverridesFolder is { } folder && Directory.Exists(folder))
 			foreach (var f in Directory.EnumerateFiles(folder))
 			{
@@ -40,11 +41,13 @@ public sealed class ConversionEngine
 
 	public IReadOnlyList<IConversionRule> Rules { get; }
 
+	public Syntax.Gs1Catalog Catalog { get; }
+
 	private FormatOptions FormatOptions => new() { Repair = _options.Repair };
 
 	/// <summary>The hash of a part: the name of its override file.</summary>
 	public static string PartHash(ScriptKind kind, ScriptSide side, string code) =>
-		ServerText.Hash(kind.CompileTarget() + "\n" + (side == ScriptSide.Server ? "server" : "client") + "\n" + code);
+		ServerText.Hash(kind.HashName() + "\n" + (side == ScriptSide.Server ? "server" : "client") + "\n" + code);
 
 	/// <summary>The parts of a script: (side, code), only the non-empty ones; a gani's script is its client part.</summary>
 	public static IEnumerable<(ScriptSide Side, string Code)> Parts(ScriptKind kind, string source)
@@ -60,13 +63,24 @@ public sealed class ConversionEngine
 		if (!string.IsNullOrWhiteSpace(client)) yield return (ScriptSide.Client, client);
 	}
 
-	public CheckResult Check(string code, ScriptKind kind) => _checks.GetOrAdd(kind.CompileTarget() + "\n" + code, _ => StrictCheck.Check(code, kind));
+	private readonly ConcurrentDictionary<string, Syntax.Reading> _readings = new();
+
+	public CheckResult Check(string code, ScriptKind kind) => _checks.GetOrAdd(code, c =>
+	{
+		var read = Syntax.Language.Read(c, Catalog);
+		_readings.TryAdd(c, read.Reading);
+		return StrictCheck.Check(read);
+	});
 
 	public PartState StateOf(string code, ScriptKind kind)
 	{
-		var check = Check(code, kind);
-		if (check.Status != CheckStatus.NotGs2) return check.Status == CheckStatus.Ok ? PartState.Gs2 : PartState.Gs1;
-		return StrictCheck.CompilesAtAll(code, kind) ? PartState.Gs1 : PartState.Broken;
+		Check(code, kind);
+		return _readings.GetValueOrDefault(code) switch
+		{
+			Syntax.Reading.Gs2 => PartState.Gs2,
+			Syntax.Reading.Broken => PartState.Broken,
+			_ => PartState.Gs1,
+		};
 	}
 
 	/// <summary>What a file's parts are, without converting anything.</summary>

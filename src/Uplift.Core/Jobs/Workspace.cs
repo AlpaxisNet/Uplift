@@ -24,6 +24,12 @@ public sealed class Workspace
 
 	public UpliftRegistry Registry { get; }
 
+	/// <summary>The GS1 commands and functions: the standard ones, the plugins' and the server's own (uplift.json).</summary>
+	public Syntax.Gs1Catalog Catalog => _catalog ??= new Syntax.Gs1Catalog(
+		Registry.Gs1Commands.Concat(Config.Gs1Commands ?? []), Registry.Gs1Functions.Concat(Config.Gs1Functions ?? []));
+
+	private Syntax.Gs1Catalog? _catalog;
+
 	/// <summary>The folder of the server's hand conversions, or null.</summary>
 	public string? OverridesFolder => Config.Overrides is { Length: > 0 } o ? Path.GetFullPath(Path.Combine(Root, o)) : null;
 
