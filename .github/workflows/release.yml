@@ -1,0 +1,70 @@
+# Builds a release when a version tag (v1.0.0) is pushed: tests on Linux and Windows, then self-contained builds for
+# linux-x64 and win-x64, published as a GitHub release with the changelog's notes for that version.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Build
+        run: dotnet build Uplift.slnx -c Release -nologo
+      - name: Test
+        run: dotnet test tests/Uplift.Tests/Uplift.Tests.csproj -c Release --no-build -nologo
+
+  release:
+    name: Publish the release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+      - name: Check the tag against the version
+        run: |
+          version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' Directory.Build.props)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match <Version>$version</Version> in Directory.Build.props"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build linux-x64 and win-x64
+        run: scripts/publish.sh linux-x64 win-x64
+      - name: Package
+        run: |
+          for rid in linux-x64 win-x64; do cp README.md THIRD-PARTY-NOTICES.md "dist/uplift-$rid/"; done
+          tar -C dist -czf "dist/uplift-$VERSION-linux-x64.tar.gz" uplift-linux-x64
+          (cd dist && zip -qr "uplift-$VERSION-win-x64.zip" uplift-win-x64)
+          (cd dist && sha256sum "uplift-$VERSION-linux-x64.tar.gz" "uplift-$VERSION-win-x64.zip" > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+      - name: Release notes
+        run: |
+          awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / && on { exit } on' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::CHANGELOG.md has no section '## $VERSION'"
+            exit 1
+          fi
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "Uplift $VERSION" --notes-file notes.md \
+            "dist/uplift-$VERSION-linux-x64.tar.gz" "dist/uplift-$VERSION-win-x64.zip" dist/SHA256SUMS.txt

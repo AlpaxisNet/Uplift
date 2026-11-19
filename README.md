@@ -4,6 +4,8 @@
 
 <p align="center">Converts a Graal server's GS1 scripts to GS2: database NPCs, weapons, classes, level NPCs and ganis.</p>
 
+<p align="center"><a href="https://github.com/AlpaxisNet/Uplift/actions/workflows/ci.yml"><img src="https://github.com/AlpaxisNet/Uplift/actions/workflows/ci.yml/badge.svg" alt="CI" /></a></p>
+
 ![Uplift in dark mode](docs/uplift-dark.png)
 
 Uplift opens a server folder, finds every script in it, and shows which ones are GS1, GS2 or broken. You tick what to convert,
@@ -21,8 +23,16 @@ Linux and macOS.
 - **You can extend it** with rules, regex fixes, GS1 commands, file formats and plugins.
 - **It's fast.** A server with about 13,700 script files is scanned in a second or two and converted in about four seconds.
 
+## Download
+
+Get the latest build from [Releases](https://github.com/AlpaxisNet/Uplift/releases): `uplift-<version>-win-x64.zip` for
+Windows or `uplift-<version>-linux-x64.tar.gz` for Linux. Unpack it and run `Uplift` (the window) or `uplift-cli` (the
+command line). The builds are self-contained: no .NET is needed on the machine. `SHA256SUMS.txt` has the checksums. What
+changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
 ## Contents
 
+- [Download](#download)
 - [Using the window](#using-the-window)
 - [Using the command line](#using-the-command-line)
 - [How a script is converted](#how-a-script-is-converted)
@@ -244,6 +254,10 @@ scripts/publish.sh linux-x64 win-x64 osx-arm64
 
 `publish.sh` writes self-contained, single-file builds (no .NET needed on the machine) to `dist/uplift-<runtime>/`:
 `Uplift` (the window) and `uplift-cli` (the command line), with an empty `plugins` folder.
+
+GitHub Actions builds and tests every push and pull request on Linux and Windows (`.github/workflows/ci.yml`). Pushing a tag
+`v<version>` that matches `<Version>` in `Directory.Build.props` builds the linux-x64 and win-x64 downloads and publishes them
+as a release, with that version's section of `CHANGELOG.md` as its notes (`.github/workflows/release.yml`).
 
 The tests include a small sample server (`tests/Uplift.Tests/Fixtures/SampleServer`) and render the window in both themes
 without a screen. Set `UPLIFT_SCREENSHOTS=<folder>` to save the renders.
