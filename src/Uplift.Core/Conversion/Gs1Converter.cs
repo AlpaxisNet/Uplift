@@ -53,10 +53,13 @@ public sealed class ConversionOptions
 	public Gs1Catalog Catalog { get; init; } = Gs1Catalog.Default;
 
 	/// <summary>
-	///     Bare names the server's scripts assign (x = 1;): one variable every script shares, so a bare read of one is that variable,
-	///     not the player's flag (<see cref="Gs1Converter.AssignedNames" />).
+	///     Bare names the server's scripts assign (x = 1;) and the objects they name (database NPCs, new T("Name"), Name.f()): a bare
+	///     read of one is that variable or object, not the player's flag (<see cref="Gs1Converter.NamesOf" />).
 	/// </summary>
 	public IReadOnlyCollection<string> SharedVariables { get; init; } = [];
+
+	/// <summary>The names the server's scripts use as the player's flags (set x;, setstring x,...; player.x).</summary>
+	public IReadOnlyCollection<string> PlayerFlags { get; init; } = [];
 }
 
 /// <summary>Converts GS1 parts to GS2. Thread-safe; each call needs a deep stack (see <see cref="Jobs.Workers" />).</summary>
@@ -91,16 +94,22 @@ public sealed class Gs1Converter
 		_catalog = options.Catalog;
 		_events = new EventTable(options.CustomEvents, _rules.Any(r => r.Id == BuiltInRules.MisspeltEventsId), options.ExtraEvents);
 		_shared = new HashSet<string>(options.SharedVariables, StringComparer.OrdinalIgnoreCase);
+		_flags = new HashSet<string>(options.PlayerFlags, StringComparer.OrdinalIgnoreCase);
 	}
 
 	private readonly HashSet<string> _shared;
+	private readonly HashSet<string> _flags;
 
-	/// <summary>The bare names a part assigns (x = 1;, x++;, x[0] = 1;), as GS1 or GS2 reads it.</summary>
-	public static IEnumerable<string> AssignedNames(string code, Gs1Catalog? catalog = null)
+	/// <summary>
+	///     The names a part defines for every script (Shared: x = 1;, x++;, x[0] = 1;, new T("x"), x.f()) and the player's flags it
+	///     uses (Flags: set x;, setstring x,...; player.x), as GS1 or GS2 reads it.
+	/// </summary>
+	public static (IReadOnlySet<string> Shared, IReadOnlySet<string> Flags) NamesOf(string code, Gs1Catalog? catalog = null)
 	{
-		var read = Language.Read(code, catalog);
-		if (read.Script == null) return [];
 		var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var flags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var read = Language.Read(code, catalog);
+		if (read.Script == null) return (names, flags);
 		var body = read.Script.Items.SelectMany(i => i switch
 		{
 			FunctionDecl f => f.Body,
@@ -115,11 +124,25 @@ public sealed class Gs1Converter
 				BinaryExpr { Left: NameExpr { Name: var n }, Op: var op } when Assigns(op) => n,
 				BinaryExpr { Left: IndexExpr { Target: NameExpr { Name: var n } }, Op: var op } when Assigns(op) => n,
 				UnaryExpr { Op: "++" or "--", Operand: NameExpr { Name: var n } } => n,
+				MethodCallExpr { Target: NameExpr { Name: var n } } => n,
+				NewExpr { Args: [StringExpr { Value: var n }, ..] } => n,
 				_ => null,
 			};
 			if (name != null) names.Add(name);
+			var flag = e switch
+			{
+				CallExpr { Name: "makevar", Args: [StringExpr { Value: var v }] } when Identifier.IsMatch(v) => v,
+				MemberExpr { Target: NameExpr { Name: "player" }, Name: var v } => v,
+				_ => null,
+			};
+			if (flag != null) flags.Add(flag);
 		});
-		return names;
+		new Rewriter(stmt: s =>
+		{
+			if (s is NewStmt { Args: [StringExpr { Value: var made }, ..] }) names.Add(made);
+			return null;
+		}).Statements(body);
+		return (names, flags);
 	}
 
 	public EventTable Events => _events;
@@ -145,7 +168,7 @@ public sealed class Gs1Converter
 			if (gs1MainCode) script = OldCommandsAreCalls(script, notes);
 			var comments = Comments.Collect(read.Parse.Comments, read.Parse.Lines);
 			var gs1Functions = !gs1MainCode || read.Parse.Gs2Only.Found.Count == 0 && !Language.HasEventFunction(script);
-			var converter = new PartConverter(comments, side == ScriptSide.Client, _events, _rules, kind, readAsGs1: !gs1MainCode, gs1Functions, _shared);
+			var converter = new PartConverter(comments, side == ScriptSide.Client, _events, _rules, kind, readAsGs1: !gs1MainCode, gs1Functions, _shared, _flags);
 			var gs2 = converter.Convert(script);
 			if (converter.Zone) return new(PartStatus.Kept, "", [], "level flag word (sparringzone/nopkzone): left as written, the client reads it by its text");
 			CheckShape(gs2);

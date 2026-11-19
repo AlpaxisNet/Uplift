@@ -11,7 +11,7 @@ public sealed class MainViewModel : ViewModelBase
 	private readonly Settings _settings;
 	private CancellationTokenSource? _cancel;
 	private IReadOnlyCollection<string> _events = [];
-	private IReadOnlyCollection<string> _shared = [];
+	private ServerNames _names = ServerNames.None;
 	private string _serverFolder;
 	private string _outputFolder;
 	private bool _outputToFolder = true;
@@ -361,13 +361,13 @@ public sealed class MainViewModel : ViewModelBase
 				var s = ConversionRun.Scan(w, ScriptKinds.All, Workers.DefaultParallelism, progress, token);
 				((IProgress<JobProgress>)progress).Report(new JobProgress("Finding custom events", 0, 1));
 				var e = w.CustomEvents(Workers.DefaultParallelism, token);
-				((IProgress<JobProgress>)progress).Report(new JobProgress("Finding shared variables", 0, 1));
-				var v = w.SharedVariables(Workers.DefaultParallelism, token);
+				((IProgress<JobProgress>)progress).Report(new JobProgress("Finding shared names and flags", 0, 1));
+				var v = w.Names(Workers.DefaultParallelism, token);
 				return (w, s, e, v);
 			}, token);
 			Workspace = workspace;
 			_events = events;
-			_shared = shared;
+			_names = shared;
 			_settings.ServerFolder = root;
 			_settings.Save();
 			if (OutputFolder.Length == 0) OutputFolder = root.TrimEnd(System.IO.Path.DirectorySeparatorChar) + "-GS2";
@@ -492,7 +492,7 @@ public sealed class MainViewModel : ViewModelBase
 		PreviewTitle = item.Path + " — converting...";
 		try
 		{
-			var outcome = await ConversionRun.PreviewAsync(Workspace, Options(preview: true), _events, item.Scan.Kind, item.Scan.File, _shared);
+			var outcome = await ConversionRun.PreviewAsync(Workspace, Options(preview: true), _events, item.Scan.Kind, item.Scan.File, _names);
 			if (version != _previewVersion) return;
 			PreviewOriginal = outcome.OriginalText ?? "";
 			PreviewConverted = outcome.Unreadable != null ? "// " + outcome.Unreadable : outcome.NewText ?? outcome.OriginalText ?? "";

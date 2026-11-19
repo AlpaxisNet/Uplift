@@ -7,7 +7,7 @@ namespace Uplift.Conversion;
 /// <summary>The conversion of one part's tree (see <see cref="Gs1Converter" />).</summary>
 // gs1Functions: whether the part's functions are GS1 code too (read as GS1, or a mixed part's with nothing of GS2's in them).
 internal sealed class PartConverter(Comments comments, bool client, EventTable events, IReadOnlyList<IConversionRule> rules, ScriptKind kind, bool readAsGs1, bool gs1Functions,
-	IReadOnlySet<string> shared)
+	IReadOnlySet<string> shared, IReadOnlySet<string> flags)
 {
 	// GS1's own names: a bare name that is none of these, and that the script never assigns, is the player's flag of that name.
 	private static readonly HashSet<string> Gs1Names = new(StringComparer.OrdinalIgnoreCase)
@@ -33,6 +33,9 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 	// Names the script assigns (bare: one variable of the server's, which every script shares) or makes an array of, or the objects it
 	// makes (new GuiWindowCtrl("Name")).
 	private readonly HashSet<string> _universe = new(StringComparer.OrdinalIgnoreCase);
+
+	// The flags the part sets itself (set x;, setstring x,...).
+	private readonly HashSet<string> _ownFlags = new(StringComparer.OrdinalIgnoreCase);
 
 	// Names inside with (...) { } and new T() { } blocks: the target's members, never the player's flags.
 	private readonly HashSet<NameExpr> _scoped = new(ReferenceEqualityComparer.Instance);
@@ -210,7 +213,11 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 				_assigned.Add(un);
 				_universe.Add(un);
 			}
-			if (e is CallExpr { Name: "makevar", Args: [StringExpr { Value: var dv }] }) _assigned.Add(dv);
+			if (e is CallExpr { Name: "makevar", Args: [StringExpr { Value: var dv }] })
+			{
+				_assigned.Add(dv);
+				_ownFlags.Add(dv);
+			}
 			if (e is CallExpr { Name: "setarray", Args: [NameExpr { Name: var array }, ..] }) _universe.Add(array);
 			if (e is NewExpr { Args: [StringExpr { Value: var made }, ..] }) _universe.Add(made);
 		});
@@ -416,6 +423,8 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 	private bool IsPlayerFlag(string name) =>
 		Gs1Flags && Identifier.IsMatch(name) && !IsReserved(name) && !Gs1Names.Contains(name) && !BuiltInNames.Globals.Contains(name) && !_universe.Contains(name)
 		&& !shared.Contains(name) && !Flag(name) && !events.IsEventFlag(name) && !name.Contains("::", StringComparison.Ordinal)
+		// A mixed part's GS1 code may name GS2 objects: only the names known as flags (set x; here or anywhere, player.x anywhere).
+		&& (readAsGs1 || _ownFlags.Contains(name) || flags.Contains(name))
 		&& !name.StartsWith("peltwith", StringComparison.OrdinalIgnoreCase)
 		&& !name.StartsWith("player", StringComparison.OrdinalIgnoreCase) && !name.StartsWith("carries", StringComparison.OrdinalIgnoreCase)
 		&& !name.Equals("NULL", StringComparison.Ordinal);

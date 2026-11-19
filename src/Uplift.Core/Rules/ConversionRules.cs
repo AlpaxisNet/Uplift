@@ -97,7 +97,7 @@ public static class BuiltInRules
 		new SelfMessageCodesRule(),
 		new CommandTyposRule(),
 		new SwitchRule(Gs1FlagsId, "GS1 flags are the player's",
-			"In GS1 a bare name that the script never assigns and that GS1 does not define (if (gotsword), quest.step) is the player's flag of that name, the same variable set gotsword; writes. GS2 reads a bare name as something else: written player.gotsword and player.quest.step, on the server and the client. Only in GS1 code: a part read as GS1, a mixed part's main code, and its functions when they have nothing of GS2's."),
+			"In GS1 a bare name that the script never assigns and that GS1 does not define (if (gotsword), quest.step) is the player's flag of that name, the same variable set gotsword; writes. GS2 reads a bare name as something else: written player.gotsword and player.quest.step, on the server and the client. Names any script on the server assigns, database NPCs, objects scripts make or call, and built-in names are left alone. In a part read as GS1 every such name is a flag; in a mixed part's GS1 code only the names the server uses as flags (set x;, player.x)."),
 		new SwitchRule(MisspeltEventsId, "Misspelt events are events",
 			"playerenterslevel, playereneterslevel, playereters, playertouchesme, playertouchesother, playerhurted, wasshooted and event names in another case (PlayerEnters) were never true in GS1, so their code never ran. Read as the events they meant (playerenters, playertouchsme, playerhurt, wasshot ...): the code runs as its author meant."),
 	];

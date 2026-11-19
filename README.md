@@ -195,7 +195,7 @@ such as a bug fix or a rewrite for engines that read something differently. The 
 | `gs1-level-names` | `players`, `npcs`, `playerscount`, `npcscount`, `setani`, `setbow` in level NPCs' server code → `level.players`, `level.npcs`, `level.players.size()`, `level.npcs.size()`, `player.setani()`, `player.bowimg =` |
 | `self-message-codes` | `players[-1]` (the NPC itself) → `this` |
 | `command-typos` | `drawoveplayer`, `dontblok` ... (bare words that did nothing) and commands joined to their number (`sleep1;`, which the original compiler dropped) → the command; off, they are kept as comments |
-| `gs1-flags` | a bare name the script never assigns, that no script on the server assigns and that GS1 does not define → the player's flag (`if (gotsword)` → `if (player.gotsword)`, `quest.step` → `player.quest.step`) |
+| `gs1-flags` | a bare name the script never assigns, that no script on the server assigns or makes as an object (database NPCs, `new T("Name")`, `Name.f()`) and that GS1 does not define → the player's flag (`if (gotsword)` → `if (player.gotsword)`, `quest.step` → `player.quest.step`). In GS2 syntax with GS1 main code, only names the server uses as flags (`set x;`, `player.x`) |
 | `misspelt-events` | `playerenterslevel`, `playertouchesme`, `playerhurted`, `wasshooted`, `PlayerEnters` ... (never true in GS1) → the event they meant |
 
 **Text fixes** are regular expressions run on GS2 code, never inside strings or comments:

@@ -5,6 +5,12 @@ using Uplift.Server;
 
 namespace Uplift.Jobs;
 
+/// <summary>What a server's scripts define for every script (shared variables and objects), and the names they use as player flags.</summary>
+public sealed record ServerNames(IReadOnlySet<string> Shared, IReadOnlySet<string> Flags)
+{
+	public static ServerNames None { get; } = new(new HashSet<string>(), new HashSet<string>());
+}
+
 /// <summary>An opened server: its folder, layout, settings and what Uplift can do for it (built-ins and plugins).</summary>
 public sealed class Workspace
 {
@@ -104,20 +110,39 @@ public sealed class Workspace
 	public List<(ScriptKind Kind, ServerFile File)> Files(IEnumerable<ScriptKind> kinds) =>
 		kinds.Distinct().SelectMany(k => Layout.Candidates(k).Select(f => (k, f))).ToList();
 
-	/// <summary>The bare names the server's scripts assign (x = 1;): variables every script shares, which GS1 flags are not.</summary>
-	public HashSet<string> SharedVariables(int parallelism, CancellationToken cancellation = default)
+	/// <summary>
+	///     The names the server's scripts define for every script (variables they assign, the database NPCs, objects they make or call)
+	///     and the names they use as the player's flags (<see cref="Conversion.Gs1Converter.NamesOf" />).
+	/// </summary>
+	public ServerNames Names(int parallelism, CancellationToken cancellation = default)
 	{
-		var found = new System.Collections.Concurrent.ConcurrentBag<string>();
+		var shared = new System.Collections.Concurrent.ConcurrentBag<string>();
+		var flags = new System.Collections.Concurrent.ConcurrentBag<string>();
 		Workers.ForEach(Files(ScriptKinds.All), parallelism, f =>
 		{
+			if (f.Kind == ScriptKind.DbNpc)
+			{
+				// A database NPC is an object of its name (its NAME line).
+				try
+				{
+					foreach (var line in File.ReadLines(f.File.FullPath, ServerText.Encoding).Take(8))
+						if (line.StartsWith("NAME ", StringComparison.Ordinal)) shared.Add(line[5..].Trim());
+				}
+				catch (IOException)
+				{
+				}
+			}
 			var (document, _) = OpenFile(f.Kind, f.File, new FormatOptions());
 			if (document == null) return;
 			foreach (var slot in document.Slots)
 				foreach (var (_, code) in ConversionEngine.Parts(f.Kind, slot.Source))
-					foreach (var name in Conversion.Gs1Converter.AssignedNames(code, Catalog))
-						found.Add(name);
+				{
+					var (s, fl) = Conversion.Gs1Converter.NamesOf(code, Catalog);
+					foreach (var n in s) shared.Add(n);
+					foreach (var n in fl) flags.Add(n);
+				}
 		}, cancellation);
-		return new HashSet<string>(found, StringComparer.OrdinalIgnoreCase);
+		return new ServerNames(new HashSet<string>(shared, StringComparer.OrdinalIgnoreCase), new HashSet<string>(flags, StringComparer.OrdinalIgnoreCase));
 	}
 
 	/// <summary>The custom events of the server: the ones its scripts send by name (unless switched off) and the configured ones.</summary>

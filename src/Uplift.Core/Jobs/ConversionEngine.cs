@@ -19,8 +19,8 @@ public sealed class ConversionEngine
 	private readonly ConvertOptions _options;
 	private readonly Dictionary<string, (bool Keep, string Text)> _overrides = new(StringComparer.OrdinalIgnoreCase);
 
-	// sharedVariables: the bare names the server's scripts assign (Workspace.SharedVariables).
-	public ConversionEngine(Workspace workspace, ConvertOptions options, IReadOnlyCollection<string> customEvents, IReadOnlyCollection<string>? sharedVariables = null)
+	// names: what the server's scripts define, and their player flags (Workspace.Names).
+	public ConversionEngine(Workspace workspace, ConvertOptions options, IReadOnlyCollection<string> customEvents, ServerNames? names = null)
 	{
 		Workspace = workspace;
 		_options = options;
@@ -30,7 +30,8 @@ public sealed class ConversionEngine
 		Catalog = workspace.Catalog;
 		_converter = new Gs1Converter(new ConversionOptions
 		{
-			CustomEvents = customEvents, Rules = Rules, ExtraEvents = workspace.Registry.Events, Catalog = Catalog, SharedVariables = sharedVariables ?? [],
+			CustomEvents = customEvents, Rules = Rules, ExtraEvents = workspace.Registry.Events, Catalog = Catalog,
+			SharedVariables = (names ?? ServerNames.None).Shared.ToList(), PlayerFlags = (names ?? ServerNames.None).Flags.ToList(),
 		});
 		if (workspace.OverridesFolder is { } folder && Directory.Exists(folder))
 			foreach (var f in Directory.EnumerateFiles(folder))

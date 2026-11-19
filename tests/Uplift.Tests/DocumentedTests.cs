@@ -121,6 +121,25 @@ public sealed class DocumentedTests
 	}
 
 	[Fact]
+	public void MixedPartsRewriteOnlyKnownFlags()
+	{
+		// GS2 syntax with GS1 main code may name GS2 objects: only names known as flags become the player's.
+		const string code = "if (playerenters) { this.c = EventControl; this.f = gotsword; }\n";
+		var text = Convert(code, options: new ConversionOptions { PlayerFlags = ["gotsword"] });
+		Assert.Contains("this.c = EventControl;", text);
+		Assert.Contains("this.f = player.gotsword;", text);
+	}
+
+	[Fact]
+	public void ServerNamesAreFound()
+	{
+		var (shared, flags) = Gs1Converter.NamesOf("function onCreated() {\n  Bot.start();\n  new GuiWindowCtrl(\"Win\") { text = \"a\"; };\n  count = 1;\n  this.a = player.quest;\n}\n");
+		Assert.Superset(new HashSet<string>(["Bot", "Win", "count"], StringComparer.OrdinalIgnoreCase), new HashSet<string>(shared, StringComparer.OrdinalIgnoreCase));
+		Assert.Contains("quest", flags);
+		Assert.Contains("gotsword", Gs1Converter.NamesOf("set gotsword;\n").Flags);
+	}
+
+	[Fact]
 	public void LevelNpcServerCodeUsesTheLevelsLists()
 	{
 		var text = Convert("if (created) { this.n = playerscount; this.a = players[this.i].x; }\n");
