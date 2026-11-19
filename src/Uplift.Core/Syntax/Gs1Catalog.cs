@@ -4,7 +4,8 @@ namespace Uplift.Syntax;
 ///     A GS1 command or function and the kind of each argument:
 ///     T text (message codes expanded; a command's last text argument is the rest of the statement, commas included),
 ///     N a numeric expression, V a variable's name, C a message code to set (setplayerprop #c,...), D a direction (up, left, down,
-///     right, or a number). Arguments past the last kind take the last kind.
+///     right, or a number), B a script block (putnpc2's {script}: the text between the braces). Arguments past the last kind take
+///     the last kind.
 /// </summary>
 public sealed record Gs1Command(string Name, string Kinds)
 {
@@ -34,7 +35,7 @@ public sealed class Gs1Catalog
 		["timereverywhere"] = "", ["destroy"] = "", ["setbackpal"] = "T", ["setletters"] = "T", ["setmap"] = "TTNN", ["setminimap"] = "TTNN",
 		["replaceani"] = "TT", ["setani"] = "TT", ["join"] = "T", ["followplayer"] = "", ["setcursor"] = "N",
 		// the player
-		["sethead"] = "T", ["setbody"] = "T", ["setsword"] = "TN", ["setshield"] = "TN", ["setgender"] = "T", ["setnick"] = "T",
+		["sethead"] = "T", ["setbody"] = "T", ["setsword"] = "TN", ["setshield"] = "TN", ["setgender"] = "T",
 		["setskincolor"] = "T", ["setcoatcolor"] = "T", ["setsleevecolor"] = "T", ["setshoecolor"] = "T", ["setbeltcolor"] = "T",
 		["setlevel"] = "T", ["setlevel2"] = "TNN", ["warpto"] = "TNN", ["addweapon"] = "T", ["removeweapon"] = "T", ["toweapons"] = "T",
 		["enableweapons"] = "", ["disableweapons"] = "", ["enableselectweapons"] = "", ["disableselectweapons"] = "", ["enabledefmovement"] = "",
@@ -50,16 +51,16 @@ public sealed class Gs1Catalog
 		["changeimgcolors"] = "NNNNN", ["changeimgzoom"] = "NN", ["changeimgmode"] = "NN", ["showtext"] = "NNNTTT", ["showtext2"] = "NNNNTTT",
 		["showpoly"] = "NN", ["showpoly2"] = "NN", ["showani"] = "NNNNT", ["showani2"] = "NNNNNT", ["wraptext"] = "NTT", ["wraptext2"] = "NNTT",
 		// sound
-		["play"] = "T", ["play2"] = "TNNN", ["playlooped"] = "T", ["stopsound"] = "T", ["stopmidi"] = "", ["playmidi"] = "T", ["setmusicvolume"] = "NN",
+		["play"] = "T", ["play2"] = "TNNN", ["playlooped"] = "T", ["stopsound"] = "T", ["stopmidi"] = "", ["setmusicvolume"] = "NN",
 		// the level
 		["putleaps"] = "NNN", ["putbomb"] = "NNN", ["putexplosion"] = "NNN", ["putexplosion2"] = "NNNN", ["removebomb"] = "N", ["removeexplo"] = "N",
-		["removearrow"] = "N", ["lay"] = "T", ["lay2"] = "TNN", ["putnpc"] = "TTNN", ["putnpc2"] = "NNT", ["putcomp"] = "TNN", ["puthorse"] = "TNN",
+		["removearrow"] = "N", ["lay"] = "T", ["lay2"] = "TNN", ["putnpc"] = "TTNN", ["putnpc2"] = "NNB", ["putcomp"] = "TNN", ["puthorse"] = "TNN",
 		["putobject"] = "TNN", ["updateboard"] = "NNNN", ["updateboard2"] = "NNNN", ["updateterrain"] = "", ["addtiledef"] = "TTN",
 		["addtiledef2"] = "TTNN", ["removetiledefs"] = "T", ["copylevel"] = "TT", ["hitplayer"] = "NNNN", ["hitcompu"] = "NNNN", ["hitnpc"] = "NNN",
 		["hitobjects"] = "NNN", ["shoot"] = "NNNNNNTT", ["shootarrow"] = "D", ["shootball"] = "", ["shootfireball"] = "D", ["shootfireblast"] = "D",
 		["shootnuke"] = "D", ["setshootparams"] = "T", ["move"] = "NNNN", ["sleep"] = "N",
 		// variables, flags and texts
-		["set"] = "V", ["unset"] = "V", ["toggle"] = "V", ["setstring"] = "VT", ["setarray"] = "VN", ["tokenize"] = "T", ["tokenize2"] = "TT",
+		["set"] = "V", ["unset"] = "V", ["setstring"] = "VT", ["setarray"] = "VN", ["tokenize"] = "T", ["tokenize2"] = "TT",
 		["addstring"] = "VT", ["removestring"] = "VT", ["deletestring"] = "VN", ["insertstring"] = "VNT", ["replacestring"] = "VNT",
 		// other scripts
 		["callnpc"] = "NT", ["callweapon"] = "NT", ["triggeraction"] = "NNTT",
@@ -68,6 +69,8 @@ public sealed class Gs1Catalog
 		["freezeplayer2"] = "", ["hidesword"] = "N", ["noplayeronwall"] = "", ["putnewcomp"] = "TNNTN", ["reflectarrow"] = "N", ["removecompus"] = "",
 		["removeguild"] = "T", ["removehorse"] = "N", ["removeitem"] = "N", ["saveinfo"] = "TT", ["sendtonc"] = "T", ["serverwarp"] = "T", ["setbow"] = "T",
 		["setcursor2"] = "T", ["setpm"] = "T", ["seturllevel"] = "T", ["setz"] = "NNNNNNNN", ["showfile"] = "T", ["spyfire"] = "NN", ["timershow"] = "",
+		["setplayerx"] = "N", ["setplayery"] = "N", ["setx"] = "N", ["sety"] = "N", ["reducebombs"] = "N", ["reducedarts"] = "N", ["reducerupees"] = "N",
+		["setbacktile"] = "N", ["setbacktile2"] = "NNNNN", ["setspritesimage"] = "T", ["setstatusimage"] = "T", ["drawovertrees"] = "",
 	};
 
 	// Commands that are another command's other name.
@@ -81,7 +84,8 @@ public sealed class Gs1Catalog
 	{
 		["strequals"] = "TT", ["strcontains"] = "TT", ["startswith"] = "TT", ["strlen"] = "T", ["strtofloat"] = "T", ["lindexof"] = "TV",
 		["sarraylen"] = "V", ["imgwidth"] = "T", ["imgheight"] = "T", ["hasweapon"] = "T", ["indexof"] = "TT", ["getnpc"] = "T", ["getplayer"] = "T", ["playersays"] = "T",
-		["onmapx"] = "T", ["onmapy"] = "T",
+		["onmapx"] = "T", ["onmapy"] = "T", ["ascii"] = "T", ["keycode"] = "T", ["getflagkeys"] = "T", ["playersays2"] = "T", ["textwidth"] = "NTTT",
+		["textheight"] = "NTTT", ["base64encode"] = "T", ["base64decode"] = "T", ["hasright"] = "TT", ["passwordmatches"] = "TT",
 	};
 
 	// ------------------------------------------------------------ message codes
@@ -97,17 +101,21 @@ public sealed class Gs1Catalog
 	private static readonly Dictionary<string, string> CodeArgumentKinds = new(StringComparer.Ordinal)
 	{
 		["v"] = "N", ["s"] = "V", ["p"] = "N", ["e"] = "NNT", ["I"] = "VN", ["t"] = "N", ["T"] = "T", ["K"] = "N", ["W"] = "N", ["w"] = "N", ["P"] = "N",
+		["N"] = "N", ["L"] = "N",
 	};
 
-	// Codes without arguments that are not player attributes.
-	private static readonly HashSet<string> PlainCodes = ["L", "F", "f", "N", "w"];
+	// Codes that need no arguments and are not player attributes (#N, #L and #W also take an index).
+	private static readonly HashSet<string> PlainCodes = ["L", "F", "f", "N", "w", "W", "D"];
+
+	// Codes GS1 leaves as written: #K(n) and #7 are text (setplayerprop #7 is the bow).
+	private static readonly HashSet<string> LiteralCodes = ["K", "7"];
 
 	// ------------------------------------------------------------ predefined names
 
 	private static readonly HashSet<string> PlayerVariables = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"x", "y", "z", "dir", "hearts", "fullhearts", "rupees", "darts", "bombs", "glovepower", "swordpower", "shieldpower", "ap", "mp", "sprite", "id",
-		"freezetime",
+		"freezetime", "hurtpower",
 	};
 
 	private static readonly Dictionary<string, Func<Expr>> Counts = new(StringComparer.OrdinalIgnoreCase)
@@ -174,11 +182,12 @@ public sealed class Gs1Catalog
 	}
 
 	/// <summary>Reads a known code's name at a position (after #); null when no known code starts there.</summary>
-	public static string? ReadCodeName(string s, ref int i)
+	// target: the code a command sets (setcharprop #C5,...), any color index; in a text only #C0 .. #C4 are codes.
+	public static string? ReadCodeName(string s, ref int i, bool target = false)
 	{
 		if (i >= s.Length) return null;
 		var c = s[i];
-		if (c == 'C' && i + 1 < s.Length && char.IsAsciiDigit(s[i + 1]))
+		if (c == 'C' && i + 1 < s.Length && (target ? char.IsAsciiDigit(s[i + 1]) : s[i + 1] is >= '0' and <= '4'))
 		{
 			i += 2;
 			return "C" + s[i - 1];
@@ -207,6 +216,9 @@ public sealed class Gs1Catalog
 		return null;
 	}
 
+	/// <summary>Whether GS1 leaves a code as its text (#K(32), #7).</summary>
+	public static bool IsLiteralCode(string code) => LiteralCodes.Contains(code);
+
 	/// <summary>Whether a code is nothing without its arguments (#v(...), #s(...) ...).</summary>
 	public static bool NeedsArguments(string code) => CodeArgumentKinds.ContainsKey(code) && !Attributes.ContainsKey(code) && !PlainCodes.Contains(code);
 
@@ -223,12 +235,20 @@ public sealed class Gs1Catalog
 	{
 		switch (code)
 		{
-			case "L" or "F":
+			case "L" or "F" when args.Count == 0:
 				return new MemberExpr(new NameExpr("level"), "name");
+			case "L" when args.Count == 1:
+				return new MemberExpr(new MemberExpr(new IndexExpr(new NameExpr("players"), [args[0]]), "level"), "name");
 			case "f":
 				return new NameExpr("image");
-			case "N":
+			case "N" when args.Count == 0:
 				return new NameExpr("name");
+			case "N" when args.Count == 1:
+				return new MemberExpr(new IndexExpr(new NameExpr("npcs"), [args[0]]), "name");
+			case "D":
+				return new NameExpr("downloadfile");
+			case "W" when args.Count == 0:
+				return new MemberExpr(new MemberExpr(new NameExpr("player"), "weapon"), "image");
 			case "v" when args.Count == 1:
 				return new CallExpr("float", [args[0]]);
 			case "s" when args.Count == 1:
@@ -253,6 +273,11 @@ public sealed class Gs1Catalog
 					: new MemberExpr(new IndexExpr(new MemberExpr(new NameExpr("player"), "weapons"), [args[0]]), "name");
 			case "P" when args.Count == 1:
 				return new IndexExpr(new MemberExpr(new NameExpr("player"), "attr"), [args[0]]);
+			// #P(n,i): player i's attribute n; #P(n,-1): the NPC's own.
+			case "P" when args.Count == 2 && IsSelf(args[1]):
+				return new IndexExpr(new NameExpr("attr"), [args[0]]);
+			case "P" when args.Count == 2:
+				return new IndexExpr(new MemberExpr(new IndexExpr(new NameExpr("players"), [args[1]]), "attr"), [args[0]]);
 		}
 		if (args.Count > 1) return null;
 		return Attribute(code, args.Count == 1 ? args[0] : null, forPlayer: true);
@@ -266,7 +291,7 @@ public sealed class Gs1Catalog
 	{
 		Expr Member(Expr? owner, string name) => owner == null ? new NameExpr(name) : new MemberExpr(owner, name);
 		Expr Indexed(Expr? owner, string name, int i) => new IndexExpr(Member(owner, name), [new NumberExpr(i.ToString(System.Globalization.CultureInfo.InvariantCulture))]);
-		var self = index is UnaryExpr { Op: "-", Operand: NumberExpr { Text: "1" } } || !forPlayer && index == null;
+		var self = index != null && IsSelf(index) || !forPlayer && index == null;
 		Expr? owner = self ? null : index == null ? new NameExpr("player") : new IndexExpr(new NameExpr("players"), [index]);
 		if (Attributes.TryGetValue(code, out var name))
 		{
@@ -280,12 +305,21 @@ public sealed class Gs1Catalog
 		return null;
 	}
 
+	private static bool IsSelf(Expr index) => index is UnaryExpr { Op: "-", Operand: NumberExpr { Text: "1" } } or NumberExpr { Text: "-1" };
+
 	// ------------------------------------------------------------ texts and variables
 
 	/// <summary>A text argument from its pieces (literal texts and codes): one value, joined with @.</summary>
 	public Expr Text(List<Expr> pieces)
 	{
 		if (pieces.Count == 0) return new StringExpr("");
+		// Literal pieces next to each other are one text.
+		for (var i = pieces.Count - 1; i > 0; i--)
+			if (pieces[i] is StringExpr b && pieces[i - 1] is StringExpr a)
+			{
+				pieces[i - 1] = new StringExpr(a.Value + b.Value);
+				pieces.RemoveAt(i);
+			}
 		var e = pieces[0];
 		for (var i = 1; i < pieces.Count; i++) e = new BinaryExpr(e, "@", pieces[i]);
 		return e;
@@ -298,7 +332,23 @@ public sealed class Gs1Catalog
 		return new CallExpr("makevar", [Text(pieces)]);
 	}
 
-	private static Expr Var(Expr reference) => reference is CallExpr { Name: "makevar", Args: [StringExpr { Value: var path }] } && PathExpr(path) is { } p ? p : reference;
+	private static Expr Var(Expr reference) => reference is CallExpr { Name: "makevar", Args: [StringExpr { Value: var path }] } && (PathExpr(path) ?? Element(path)) is { } p ? p : reference;
+
+	// this.list[this.i]: the element the text names (a path with indices).
+	private static Expr? Element(string text)
+	{
+		if (!text.Contains('[', StringComparison.Ordinal)) return null;
+		var read = Parser.Parse(text + ";", Dialect.Gs2);
+		return read.Script is { Items: [StatementItem { Statement: ExprStmt { Expression: IndexExpr { Target: MemberExpr or NameExpr } e } }] } && IsPlainPath(e) ? e : null;
+	}
+
+	private static bool IsPlainPath(Expr e) => e switch
+	{
+		NameExpr or NumberExpr => true,
+		MemberExpr m => IsPlainPath(m.Target),
+		IndexExpr i => IsPlainPath(i.Target) && i.Indices.All(IsPlainPath),
+		_ => false,
+	};
 
 	/// <summary>this.a.b as a GS2 expression; null when the text is not such a name.</summary>
 	public static Expr? PathExpr(string path)
@@ -339,8 +389,24 @@ public sealed class Gs1Catalog
 		Stmt Assign(Expr target, Expr value) => new ExprStmt(new BinaryExpr(target, "=", value));
 		Stmt Method(Expr target, string method, List<Expr> a) => new ExprStmt(new MethodCallExpr(target, method, a));
 		if (args.Count == 0 && _commands.TryGetValue(name, out var kinds) && kinds.StartsWith('T')) args = [new StringExpr("")];
+		// setstring x; and setplayerprop #c; set the empty text.
+		if (args.Count == 1 && name is "setstring" or "setplayerprop" or "setcharprop") args = [args[0], new StringExpr("")];
 		switch (name)
 		{
+			case "setplayerx" or "setplayery" when args.Count == 1:
+				return Assign(new MemberExpr(new NameExpr("player"), name[^1..]), args[0]);
+			case "setx" or "sety" when args.Count == 1:
+				return Assign(new MemberExpr(new NameExpr("this"), name[^1..]), args[0]);
+			// Commands GS2 has as the player's members.
+			case "setbody" when args.Count == 1:
+				return Assign(new MemberExpr(new NameExpr("player"), "bodyimg"), AsText(args[0]));
+			case "setplayerdir" when args.Count == 1:
+				return Assign(new MemberExpr(new NameExpr("player"), "dir"), args[0]);
+			case "setlevel" when args.Count == 1:
+				return Method(new NameExpr("player"), "setlevel2", [args[0], new MemberExpr(new NameExpr("player"), "x"), new MemberExpr(new NameExpr("player"), "y")]);
+			// GS2's setmap(levelnames.txt, image, x, y): GS1 scripts wrote the image first.
+			case "setmap" or "setminimap" when args.Count >= 2 && !EndsWithTxt(args[0]):
+				return Call(name, [args[1], args[0], .. args.Skip(2)]);
 			// #P(n): the attribute n.
 			case "setplayerprop" or "setcharprop" when args.Count == 2 && args[0] is Gs1CodeExpr { Code: "P", Args: [var number] }:
 				return Assign(new IndexExpr(name == "setplayerprop" ? new MemberExpr(new NameExpr("player"), "attr") : new NameExpr("attr"), [number]), AsText(args[1]));
@@ -363,7 +429,7 @@ public sealed class Gs1Catalog
 					[args[0] is StringExpr separators ? new StringExpr(" ," + separators.Value) : new BinaryExpr(new StringExpr(" ,"), "@", args[0])]));
 			// An array's name is a variable of the script (not a player's flag).
 			case "setarray" when args.Count == 2:
-				return Call("setarray", [args[0] is CallExpr { Name: "makevar", Args: [StringExpr { Value: var array }] } && (PathExpr(array) ?? (IsIdentifier(array) ? new NameExpr(array) : null)) is { } plain ? plain : Var(args[0]), args[1]]);
+				return Call("setarray", [args[0] is CallExpr { Name: "makevar", Args: [StringExpr { Value: var array }] } && (PathExpr(array) ?? Element(array) ?? (IsIdentifier(array) ? new NameExpr(array) : null)) is { } plain ? plain : Var(args[0]), args[1]]);
 			case "addstring" when args.Count == 2:
 				return Method(Var(args[0]), "add", [AsText(args[1])]);
 			case "removestring" when args.Count == 2:
@@ -378,6 +444,15 @@ public sealed class Gs1Catalog
 		return Call(Renamed.GetValueOrDefault(name, name), args);
 	}
 
+	private static bool EndsWithTxt(Expr e) => e is StringExpr { Value: var v } && v.TrimEnd().EndsWith(".txt", StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>The text of "quoted text" (a quoted string in a text argument), or null.</summary>
+	public static string? Unquoted(string text)
+	{
+		var t = text.Trim();
+		return t.Length >= 2 && t[0] == t[^1] && t[0] is '"' or '\'' && t.IndexOf(t[0], 1) == t.Length - 1 ? t[1..^1] : null;
+	}
+
 	/// <summary>A direction argument: up, left, down, right as 0-3; anything else as written.</summary>
 	public static Expr? Direction(string word) => Directions.TryGetValue(word.Trim(), out var d) ? new NumberExpr(d.ToString(System.Globalization.CultureInfo.InvariantCulture)) : null;
 
@@ -386,6 +461,15 @@ public sealed class Gs1Catalog
 	{
 		switch (name.ToLowerInvariant())
 		{
+			// The player's chat is the text (case ignored): playersays("Buy") or playersays(buy).
+			case "playersays" when args.Count == 1:
+				return new CallExpr("strequals", [new MemberExpr(new NameExpr("player"), "chat"), args[0] is StringExpr q && Unquoted(q.Value) is { } quoted ? new StringExpr(quoted) : AsText(args[0])]);
+			case "ascii" when args.Count == 1:
+				return new CallExpr("getascii", args);
+			case "keycode" when args.Count == 1:
+				return new CallExpr("getkeycode", [AsText(args[0])]);
+			case "getflagkeys" when args.Count == 1:
+				return new CallExpr("getstringkeys", args);
 			case "strequals" when args.Count == 2:
 				return new CallExpr("strequals", [AsText(args[0]), AsText(args[1])]);
 			case "strcontains" when args.Count == 2:
@@ -404,9 +488,9 @@ public sealed class Gs1Catalog
 				return new CallExpr("getimgwidth", args);
 			case "imgheight" when args.Count == 1:
 				return new CallExpr("getimgheight", args);
+			// The weapon the player has (the converter writes player.findweapon on the server).
 			case "hasweapon" when args.Count == 1:
-				return new BinaryExpr(new BinaryExpr(new CallExpr("findweapon", args), "!=", new NullExpr()), "||",
-					new MethodCallExpr(new NameExpr("player"), "hasweapon", args));
+				return new BinaryExpr(new CallExpr("findweapon", args), "!=", new NullExpr());
 			case "indexof" when args.Count == 2:
 				return new MethodCallExpr(args[1], "pos", [args[0]]);
 			case "getnpc" when args.Count == 1:

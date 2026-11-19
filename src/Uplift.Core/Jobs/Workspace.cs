@@ -104,6 +104,22 @@ public sealed class Workspace
 	public List<(ScriptKind Kind, ServerFile File)> Files(IEnumerable<ScriptKind> kinds) =>
 		kinds.Distinct().SelectMany(k => Layout.Candidates(k).Select(f => (k, f))).ToList();
 
+	/// <summary>The bare names the server's scripts assign (x = 1;): variables every script shares, which GS1 flags are not.</summary>
+	public HashSet<string> SharedVariables(int parallelism, CancellationToken cancellation = default)
+	{
+		var found = new System.Collections.Concurrent.ConcurrentBag<string>();
+		Workers.ForEach(Files(ScriptKinds.All), parallelism, f =>
+		{
+			var (document, _) = OpenFile(f.Kind, f.File, new FormatOptions());
+			if (document == null) return;
+			foreach (var slot in document.Slots)
+				foreach (var (_, code) in ConversionEngine.Parts(f.Kind, slot.Source))
+					foreach (var name in Conversion.Gs1Converter.AssignedNames(code, Catalog))
+						found.Add(name);
+		}, cancellation);
+		return new HashSet<string>(found, StringComparer.OrdinalIgnoreCase);
+	}
+
 	/// <summary>The custom events of the server: the ones its scripts send by name (unless switched off) and the configured ones.</summary>
 	public HashSet<string> CustomEvents(int parallelism, CancellationToken cancellation = default)
 	{

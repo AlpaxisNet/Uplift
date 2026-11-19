@@ -104,8 +104,11 @@ The report has four files:
   `actionfoo`, ...) set to true. GS2 has one function per event, so the main code has to be specialised for each event. The
   flags are folded to true or false, the dead branches dropped, and no call with side effects may be lost. If the script
   already has a function for an event, it runs after the main code, so the two are merged.
-- **Comparison with `=`.** In a GS1 condition, `=` compares, and it binds after `&&` and `||`: `a && b = c` is
-  `(a && b) == c`.
+- **Comparison with `=`.** In a GS1 `if` or `while` condition, the first `=` compares, and it binds after `&&` and `||`:
+  `a && b = c` is `(a && b) == c`. Its operands are values, where a later `=` assigns: `a = b = c` is `a == (b = c)`. In an
+  assignment's value and in a `for` condition, `=` assigns.
+- **Names.** A bare name the script never assigns and GS1 does not define is the player's flag: `set gotsword;` and
+  `if (gotsword)` are the same variable, written `player.gotsword` in GS2.
 - **Old syntax.** Commands take bare text arguments (`setimg door.png;`). The last text argument runs to the `;`, commas
   included, and quotes and `//` inside it are text. Message codes (`#c`, `#p(0)`, `#v(...)`, `#3(-1)`) have to be read.
   `with` blocks on players and `players[0]` mean something different in GS2.
@@ -120,13 +123,16 @@ converted GS2 code, which never touch strings or comments.
    the script between its start and end lines; for a class, the whole file; for a gani, its `SCRIPT` block. Each script is
    split at its first real `//#CLIENTSIDE` marker. A marker inside a string or a comment doesn't count.
 2. **Decide the language of each part:**
+   - **The marker:** the first line comment that starts with `//#GS1` or `//#GS2` decides.
    - **GS2:** the part parses as GS2 and has none of GS1's signs. It is left alone. The signs are:
-     - a `//#GS1` marker;
-     - an event flag (`created`, `playerenters`, `timeout`, `actionX` ...) tested outside functions;
-     - an old command alone outside functions (`hide;`).
-   - **GS2 with GS1 main code:** the part's functions are GS2 (they use syntax GS1 doesn't have: quoted text, `@`, `SPC`,
-     method calls, `?:`, parameters ...). The code outside functions is read with GS1's rules, and so is any single
-     statement inside a function that isn't GS2.
+     - an event flag (`created`, `playerenters`, `timeout`, `actionX` ...) tested outside functions, or `timeout = x;` there;
+     - an old command alone outside functions (`dontblock;`; not `hide;`, `show;`, `destroy;` or `enableweapons;`, which
+       GS2 scripts call too).
+
+     A part with an event function (`function onCreated()`) is GS2 unless it tests an event outside functions.
+   - **GS2 with GS1 main code:** the part's functions are GS2 (they use syntax GS1 doesn't have: `@`, `SPC`, method calls,
+     parameters ..., or they are event functions). The code outside functions is read with GS1's rules, and so is any
+     single statement inside a function that isn't GS2.
    - **GS1:** anything else that parses with GS1's rules.
    - **Broken:** a part that parses in none of these ways is reported and left as it is.
 3. **Convert.** The tree is normalised, then rewritten by the enabled rules. Its main code is specialised for each event into
@@ -172,7 +178,7 @@ This file is optional and lives in the server's folder. `uplift-cli init` writes
 | `folders` | Where each kind of script lives, if not in the standard folders. |
 | `customEvents`, `scanCustomEvents` | GS1 scripts send events by name (`callnpc`, `callweapon`, `trigger`, `scheduleevent`), and the receiving script tests the name as a flag. Uplift finds the names the scripts send, so `if (openshop)` becomes `function onOpenShop()` and is not read as a variable. Add any it cannot find. |
 | `rules` | Rules and text fixes switched on (`true`) or off (`false`) by id. |
-| `gs1Commands`, `gs1Functions` | GS1 commands (or functions with text arguments) that the standard set lacks, with the kind of each argument: `T` text, `N` number, `V` a variable's name, `D` a direction (up, left, down, right). A command's last `T` argument takes the rest of the statement. |
+| `gs1Commands`, `gs1Functions` | GS1 commands (or functions with text arguments) that the standard set lacks, with the kind of each argument: `T` text, `N` number, `V` a variable's name, `D` a direction (up, left, down, right), `B` a script block (`{...}`). A command's last `T` argument takes the rest of the statement. |
 | `textRules` | Your own regular-expression fixes of GS2 code. |
 | `events` | More GS1 event flags and the GS2 function each becomes. |
 | `plugins` | Plugin assemblies (relative to the server's folder, or absolute). |
@@ -186,10 +192,11 @@ such as a bug fix or a rewrite for engines that read something differently. The 
 | Rule | What it does |
 | --- | --- |
 | `callnpc-self` | `callnpc(-1, "ev", ...)` (the current NPC) → `this.trigger("ev", ...)` |
-| `gs1-level-names` | `playerscount`, `npcscount`, `setani`, `setbow` in level NPCs' server code → `players.size()`, `npcs.size()`, `player.setani()`, `player.bowimg =` |
+| `gs1-level-names` | `players`, `npcs`, `playerscount`, `npcscount`, `setani`, `setbow` in level NPCs' server code → `level.players`, `level.npcs`, `level.players.size()`, `level.npcs.size()`, `player.setani()`, `player.bowimg =` |
 | `self-message-codes` | `players[-1]` (the NPC itself) → `this` |
-| `command-typos` | `drawoveplayer`, `dontblok` ... (bare words that did nothing) → the command |
-| `misspelt-events` | `playerenterslevel` ... (never true) → `onPlayerEnters` |
+| `command-typos` | `drawoveplayer`, `dontblok` ... (bare words that did nothing) and commands joined to their number (`sleep1;`, which the original compiler dropped) → the command; off, they are kept as comments |
+| `gs1-flags` | a bare name the script never assigns, that no script on the server assigns and that GS1 does not define → the player's flag (`if (gotsword)` → `if (player.gotsword)`, `quest.step` → `player.quest.step`) |
+| `misspelt-events` | `playerenterslevel`, `playertouchesme`, `playerhurted`, `wasshooted`, `PlayerEnters` ... (never true in GS1) → the event they meant |
 
 **Text fixes** are regular expressions run on GS2 code, never inside strings or comments:
 
@@ -213,12 +220,15 @@ Your own text fixes go in `uplift.json` (`textRules`).
 
 ## What to check after converting
 
-- **`warnings.txt`: classes converted from GS1 that other scripts join.** In GS1, joining a class included its main code,
-  so the class's event code ran alongside the script's own. In GS2, a script's own `onCreated` (or any other event
-  function) runs *instead of* the class's. Uplift lists every script that joins such a class and defines the same event
-  function on the same side. Make those functions call the class's code.
+- **Classes converted from GS1.** GS1 ran only the joining script's own main code: a joined class gave it functions,
+  and its event tests made the script's code run, but the class's own code outside functions never ran. Converted, that
+  code becomes the class's event functions, which GS2 does run. Check that it should. `warnings.txt` also lists every
+  script that joins such a class and defines the same event function on the same side: GS2 runs the script's own.
+- **Level NPCs without `//#CLIENTSIDE`.** In old worlds, before NPC servers, they ran on the player's client. Converted
+  as server code, commands such as `play`, `showimg` or `setimgpart` no longer reach the player.
 - **The notes in `parts.tsv`.** They say what changed in form or meaning: merged event functions, bug fixes, `with`
-  blocks written with GS1's meaning, and `a && b = c`, which GS1 reads as `(a && b) == c`.
+  blocks written with GS1's meaning, player flags, `a && b = c` (GS1 reads it as `(a && b) == c`) and `a = b = c` in a
+  value (GS1 sets both).
 - **Parts that were not converted.** Each has its reason. Convert them by hand and save the result as an override, so the
   next run keeps it. A command the reason calls unknown can be added in `uplift.json` (`gs1Commands`).
 
@@ -251,6 +261,7 @@ without a screen. Set `UPLIFT_SCREENSHOTS=<folder>` to save the renders.
 | `scripts/publish.sh` | Self-contained builds for download. |
 | `docs/` | The screenshots. |
 
-The GS1 command and message-code catalog was built from GS1's public documentation, chiefly the Graal Bible pages *Old
-GScript*, *Starting Guide: Old script compatibility* and *GS1 To GS2*. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
+The GS1 command and message-code catalog, and the rules for GS1's operators, events and names, follow GS1's and GS2's
+documentation, chiefly the Graal Bible pages *Old GScript*, *Starting Guide: Old script compatibility* and *GS1 To GS2*. The
+built-in names a bare name is checked against are the *Global* sections of the client's and the NPC server's script help. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
 for the code Uplift includes from other projects.

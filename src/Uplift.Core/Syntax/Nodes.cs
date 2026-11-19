@@ -99,9 +99,14 @@ public sealed record SwitchCase(List<Expr?> Labels, List<Stmt> Body);
 
 public sealed record ReturnStmt(Expr? Value) : Stmt;
 
-public sealed record BreakStmt : Stmt;
+/// <summary>break; or break label; (the labelled loop or switch).</summary>
+public sealed record BreakStmt(string? Label = null) : Stmt;
 
-public sealed record ContinueStmt : Stmt;
+/// <summary>continue; or continue label;</summary>
+public sealed record ContinueStmt(string? Label = null) : Stmt;
+
+/// <summary>label: loop (a for, while, do or switch that break label; and continue label; name).</summary>
+public sealed record LabeledStmt(string Label, Stmt Body) : Stmt;
 
 /// <summary>new Type(args) { body }; (an object made with its members set: GUI controls). TypeExpr: new (expr)(args) { ... }.</summary>
 public sealed record NewStmt(string TypeName, List<Expr> Args, List<Stmt> Body, Expr? TypeExpr = null) : Stmt;

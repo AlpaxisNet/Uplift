@@ -41,7 +41,9 @@ public static class ConversionRun
 
 		progress?.Report(new JobProgress("Finding custom events", 0, 1));
 		var events = workspace.CustomEvents(options.Parallelism, cancellation);
-		var engine = new ConversionEngine(workspace, options, events);
+		progress?.Report(new JobProgress("Finding shared variables", 0, 1));
+		var shared = workspace.SharedVariables(options.Parallelism, cancellation);
+		var engine = new ConversionEngine(workspace, options, events, shared);
 		var files = workspace.Files(options.Kinds).Where(f => options.Only == null || options.Only.Contains(f.File.RelativePath)).ToList();
 
 		var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -76,8 +78,9 @@ public static class ConversionRun
 	}
 
 	/// <summary>The conversion of one file, in memory (for previews).</summary>
-	public static Task<FileOutcome> PreviewAsync(Workspace workspace, ConvertOptions options, IReadOnlyCollection<string> customEvents, ScriptKind kind, ServerFile file) =>
-		Workers.Run(() => new ConversionEngine(workspace, options, customEvents).ProcessFile(kind, file));
+	public static Task<FileOutcome> PreviewAsync(Workspace workspace, ConvertOptions options, IReadOnlyCollection<string> customEvents, ScriptKind kind, ServerFile file,
+		IReadOnlyCollection<string>? sharedVariables = null) =>
+		Workers.Run(() => new ConversionEngine(workspace, options, customEvents, sharedVariables).ProcessFile(kind, file));
 
 	private static void Write(FileOutcome outcome, ConvertOptions options, string? outputFolder, string? backupFolder)
 	{

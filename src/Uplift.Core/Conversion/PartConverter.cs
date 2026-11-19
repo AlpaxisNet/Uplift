@@ -5,8 +5,45 @@ using static Uplift.Conversion.Gs1Converter;
 namespace Uplift.Conversion;
 
 /// <summary>The conversion of one part's tree (see <see cref="Gs1Converter" />).</summary>
-internal sealed class PartConverter(Comments comments, bool client, EventTable events, IReadOnlyList<IConversionRule> rules, ScriptKind kind, bool readAsGs1, bool timeoutIsEvent)
+// gs1Functions: whether the part's functions are GS1 code too (read as GS1, or a mixed part's with nothing of GS2's in them).
+internal sealed class PartConverter(Comments comments, bool client, EventTable events, IReadOnlyList<IConversionRule> rules, ScriptKind kind, bool readAsGs1, bool gs1Functions,
+	IReadOnlySet<string> shared)
 {
+	// GS1's own names: a bare name that is none of these, and that the script never assigns, is the player's flag of that name.
+	private static readonly HashSet<string> Gs1Names = new(StringComparer.OrdinalIgnoreCase)
+	{
+		// objects and lists
+		"this", "thiso", "temp", "local", "global", "player", "playero", "client", "clientr", "server", "serverr", "level", "params", "tokens", "players",
+		"allplayers", "npcs",
+		"weapons", "weapon", "compus", "bombs", "arrows", "items", "explos", "horses", "signs", "links", "baddies",
+		// values
+		"x", "y", "z", "dir", "id", "timevar", "timevar2", "nwtime", "levelorgx", "levelorgy", "board", "tiles", "pi", "mousex", "mousey", "mousescreenx",
+		"mousescreeny", "mousebuttons", "screenwidth", "screenheight", "isweapon", "isleader", "isonmap", "issparringzone", "isnopkzone", "nopkzone",
+		"sparringzone", "compsdead", "carrying", "canspin", "firedonhorse", "keypressed", "lighteffectsenabled", "weaponsenabled", "timeout", "istimeout",
+		"focusx", "focusy",
+		// the NPC's own attributes, as message codes and commands write them
+		"chat", "nick", "account", "guild", "ani", "swordimg", "shieldimg", "headimg", "horseimg", "carrynpc", "bowimg", "bodyimg", "colors", "attr", "image",
+		"name", "downloadfile", "ap", "hearts", "fullhearts", "rupees", "darts", "glovepower", "swordpower", "shieldpower", "sprite", "mp", "freezetime",
+		"hurtpower", "width", "height", "visible", "blockagain", "dontblock",
+	};
+
+	// The flags GS1 reads bare, written as the player's (for the part's note).
+	private readonly SortedSet<string> _playerFlags = new(StringComparer.OrdinalIgnoreCase);
+
+	// Names the script assigns (bare: one variable of the server's, which every script shares) or makes an array of, or the objects it
+	// makes (new GuiWindowCtrl("Name")).
+	private readonly HashSet<string> _universe = new(StringComparer.OrdinalIgnoreCase);
+
+	// Names inside with (...) { } and new T() { } blocks: the target's members, never the player's flags.
+	private readonly HashSet<NameExpr> _scoped = new(ReferenceEqualityComparer.Instance);
+
+	private readonly bool _gs1FlagsRule = rules.Any(r => r.Id == BuiltInRules.Gs1FlagsId);
+
+	// Whether the code being normalized is GS1's (the main code, or GS1 functions).
+	private bool _gs1Code;
+
+	private bool Gs1Flags => _gs1FlagsRule && _gs1Code;
+
 	// Events without parameters: one handler may call another's when their bodies are the same.
 	private static readonly HashSet<string> ParameterlessEvents = new(StringComparer.OrdinalIgnoreCase)
 	{
@@ -42,8 +79,8 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 
 	private bool Gani => kind == ScriptKind.Gani;
 
-	/// <summary>A level NPC's server part read as GS1 (players[0] is the event's player ...).</summary>
-	private bool Gs1LevelServer => kind == ScriptKind.LevelNpc && !client && readAsGs1;
+	/// <summary>A level NPC's server part with GS1 code (players[0] is the event's player ...).</summary>
+	private bool Gs1LevelServer => kind == ScriptKind.LevelNpc && !client && (readAsGs1 || gs1Functions);
 
 	private void Note(string text)
 	{
@@ -63,7 +100,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 	}
 
 	private static bool IsPlayerTarget(Expr target) => target is CallExpr { Name: "findplayer" or "getplayer" or "findplayer2" or "findplayerbycommunityname" }
-		or IndexExpr { Target: NameExpr { Name: "players" or "allplayers" } };
+		or IndexExpr { Target: NameExpr { Name: "allplayers" } } || target is IndexExpr { Target: var list } && IsPlayersList(list);
 
 	/// <summary>
 	///     GS1's with (players[i]) / with (getplayer(x)) changes the current player only: the player's commands, #a and the player's
@@ -78,7 +115,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		{
 			if (s is WithStmt w && IsPlayerTarget(w.Target))
 			{
-				CheckWithPlayerBody(w.Body, w.Target is IndexExpr { Target: NameExpr { Name: "players" } });
+				CheckWithPlayerBody(w.Body, w.Target is IndexExpr { Target: var list } && IsPlayersList(list));
 				var inner = new Rewriter(
 					expr: e => e switch
 					{
@@ -109,7 +146,7 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 	}
 
 	// Inside a GS2 with, a bare name is looked up on the target first: only names whose meaning is the same either way are allowed.
-	private static readonly HashSet<string> WithRoots = new(StringComparer.Ordinal) { "player", "this", "client", "clientr", "server", "serverr", "params", "tokens" };
+	private static readonly HashSet<string> WithRoots = new(StringComparer.Ordinal) { "player", "this", "client", "clientr", "server", "serverr", "params", "tokens", "pi" };
 
 	private static readonly HashSet<string> WithCalls = new(StringComparer.OrdinalIgnoreCase)
 	{
@@ -153,29 +190,63 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 				Note($"function {f.Name} renamed {name} (in GS2 the name is a keyword or a built-in, which would be called instead)");
 			}
 
+		// GS1's timeout is the event only where a condition tests it: elsewhere it is the time left on the timer.
+		var timeouts = TimeoutEvents();
+		main = timeouts.Statements(main);
+		functions = functions.Select(f => timeouts.Statements(f.Body) is var b && !ReferenceEquals(b, f.Body) ? Keep(f, f with { Body = b }) : f).ToList();
+
 		Walk(main.Concat(functions.SelectMany(f => f.Body)).ToList(), e =>
 		{
-			if (e is BinaryExpr { Left: NameExpr { Name: var an }, Op: "=" or "+=" or "-=" or "@=" or "*=" or "/=" }) _assigned.Add(an);
-			if (e is UnaryExpr { Op: "++" or "--", Operand: NameExpr { Name: var un } }) _assigned.Add(un);
-			if (e is CallExpr { Name: "makevar", Args: [StringExpr { Value: var dv }] }) _assigned.Add(dv);
-		});
-		FindCustomEvents(main, functions);
-		// The GS1 grammar reads a comparing = after && and ||: if (a && b = 0) is if ((a && b) == 0). Kept, but worth a look.
-		if (readAsGs1)
-			Walk(main.Concat(functions.SelectMany(f => f.Body)).ToList(), e =>
+			if (e is BinaryExpr { Left: NameExpr { Name: var an }, Op: "=" or "+=" or "-=" or "@=" or "*=" or "/=" or "%=" or "^=" or ":=" or "|=" or "&=" or "<<=" or ">>=" })
 			{
-				if (e is BinaryExpr { Op: "=", Left: BinaryExpr { Op: "&&" or "||" } })
-					Note("GS1's comparing = binds after && and ||: a && b = c is (a && b) == c (kept as it is): check that the script meant it");
-			});
+				_assigned.Add(an);
+				_universe.Add(an);
+			}
+			// An array (x[0]), and a name also used as temp.x (GS2 binds a bare x to it): no flag.
+			if (e is IndexExpr { Target: NameExpr { Name: var arrayName } }) _universe.Add(arrayName);
+			if (e is MemberExpr { Target: NameExpr { Name: "temp" }, Name: var tempName }) _universe.Add(tempName);
+			if (e is UnaryExpr { Op: "++" or "--", Operand: NameExpr { Name: var un } })
+			{
+				_assigned.Add(un);
+				_universe.Add(un);
+			}
+			if (e is CallExpr { Name: "makevar", Args: [StringExpr { Value: var dv }] }) _assigned.Add(dv);
+			if (e is CallExpr { Name: "setarray", Args: [NameExpr { Name: var array }, ..] }) _universe.Add(array);
+			if (e is NewExpr { Args: [StringExpr { Value: var made }, ..] }) _universe.Add(made);
+		});
+		new Rewriter(stmt: st =>
+		{
+			switch (st)
+			{
+				// A bare word alone does nothing: kept as it is written (a comment).
+				case ExprStmt { Expression: NameExpr alone }:
+					_scoped.Add(alone);
+					break;
+				case WithStmt w:
+					Walk(w.Body, x => { if (x is NameExpr n) _scoped.Add(n); });
+					break;
+				case NewStmt n:
+					if (n.Args is [StringExpr { Value: var made }, ..]) _universe.Add(made);
+					Walk(n.Body, x => { if (x is NameExpr name) _scoped.Add(name); });
+					break;
+			}
+			return null;
+		}).Statements(main.Concat(functions.SelectMany(f => f.Body)).ToList());
+		FindCustomEvents(main, functions);
 		_context = new RuleContext(kind, client ? ScriptSide.Client : ScriptSide.Server, readAsGs1, functions.Select(f => f.Name).ToHashSet(StringComparer.OrdinalIgnoreCase), Notes);
 		var normalizer = Normalizer(functions);
+		_gs1Code = _context.Gs1Code = true;
 		main = normalizer.Statements(main);
+		_gs1Code = _context.Gs1Code = readAsGs1 || gs1Functions;
 		functions = functions.Select(f => Keep(f, f with { Name = _renamed.GetValueOrDefault(f.Name, f.Name), Body = normalizer.Statements(f.Body) })).ToList();
+		_gs1Code = _context.Gs1Code = false;
 		if (readAsGs1)
 		{
 			main = WithPlayer(main);
 			functions = functions.Select(f => WithPlayer(f.Body) is var b && !ReferenceEquals(b, f.Body) ? Keep(f, f with { Body = b }) : f).ToList();
 		}
+		if (_playerFlags.Count > 0)
+			Note($"GS1 flags read without a prefix are the player's: written player.{string.Join(", player.", _playerFlags.Take(6))}{(_playerFlags.Count > 6 ? " ..." : "")}");
 
 		if (Uses(main, functions, e => e is NameExpr { Name: var n } && (n.Equals("sparringzone", StringComparison.OrdinalIgnoreCase) || n.Equals("nopkzone", StringComparison.OrdinalIgnoreCase)))) Zone = true;
 		if (functions.Any(f => Uses(f.Body, [], e => e is NameExpr { Name: var n } && Flag(n))))
@@ -197,9 +268,17 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			if (events.CustomEvents.Contains(t) && !events.IsStandard(t)) Note($"'{t}' tested as an event (other scripts send it): on{char.ToUpperInvariant(t[0]) + t[1..]}()");
 		Walk(main, e =>
 		{
-			if (e is NameExpr { Name: var tn } && events.IsMisspelling(tn)) Note("bug fix: misspelt playerenters (" + tn + ") is playerenters");
+			if (e is NameExpr { Name: var tn } && events.IsMisspelling(tn)) Note($"bug fix: '{tn}' (never true in GS1: a misspelt event, or an event's name in another case) is the event {events.Canon(tn)}");
 		});
 		var eventList = new List<string>(tested);
+		// GS1: an event other scripts send (callnpc i,doit;) runs the main code with its flag true, then the script's function of
+		// that name. In GS2 the event is the function on<Event>: it gets the main code, then calls the function.
+		var eventFunctions = readAsGs1 || gs1Functions
+			? functions.Where(f => events.CustomEvents.Contains(f.Name) && !events.IsStandard(f.Name) && !f.Name.StartsWith("on", StringComparison.OrdinalIgnoreCase) && f.Params.Count == 0).ToList()
+			: [];
+		foreach (var f in eventFunctions)
+			if (!eventList.Contains(f.Name, StringComparer.OrdinalIgnoreCase))
+				eventList.Add(f.Name);
 		var timerSet = Uses(main, functions, e => e is CallExpr { Name: var c } && c.Equals("setTimer", StringComparison.OrdinalIgnoreCase));
 		if (!eventList.Contains("created", StringComparer.OrdinalIgnoreCase)) eventList.Insert(0, "created");
 		if (timerSet && !eventList.Contains("istimeout", StringComparer.OrdinalIgnoreCase)) eventList.Add("istimeout");
@@ -238,6 +317,29 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			Note($"main code of {f.Name} merged before the script's own {f.Name}");
 		}
 
+		foreach (var f in eventFunctions)
+		{
+			var handlerName = events.Function(f.Name);
+			if (functions.Any(x => x.Name.Equals(handlerName, StringComparison.OrdinalIgnoreCase))) continue;
+			var call = new ExprStmt(new CallExpr(f.Name, []));
+			var at = handlers.FindIndex(h => h.Name.Equals(handlerName, StringComparison.OrdinalIgnoreCase));
+			if (at >= 0)
+			{
+				if (Returns(handlers[at].Body)) throw new UnconvertibleException("main code that returns, and the function of the same event: " + f.Name);
+				var withCall = handlers[at] with { Body = [.. handlers[at].Body, call] };
+				_origins[withCall] = _origins[handlers[at]];
+				comments.Alias(withCall, handlers[at]);
+				handlers[at] = withCall;
+			}
+			else
+			{
+				var handler = new FunctionDecl(handlerName, null, false, [], [call]);
+				_origins[handler] = [];
+				handlers.Add(handler);
+			}
+			Note($"'{f.Name}' (an event other scripts send) is {handlerName}(), which calls the script's {f.Name}() after its main code, as in GS1");
+		}
+
 		// Same bodies: the later parameterless handler calls the earlier one.
 		var printedBodies = new Dictionary<string, FunctionDecl>();
 		for (var i = 0; i < handlers.Count; i++)
@@ -270,6 +372,8 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 			return r;
 		}).ToList();
 
+		if (kind == ScriptKind.Class && readAsGs1 && handlers.Count > 0)
+			Note("a GS1 class's code outside functions never ran when a script joined it (GS1 ran only the script's own main code): in GS2 its event functions run");
 		var items = new List<Item>(declarations);
 		items.AddRange(joins.Select(j => Keep(j, new StatementItem(j))));
 		items.AddRange(handlers);
@@ -278,8 +382,43 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		return new Script(items);
 	}
 
-	private bool Flag(string name) =>
-		(events.IsEventFlag(name) || _customFlags.Contains(name)) && (timeoutIsEvent || !name.Equals("timeout", StringComparison.OrdinalIgnoreCase));
+	private bool Flag(string name) => (events.IsEventFlag(name) || _customFlags.Contains(name)) && !name.Equals("timeout", StringComparison.OrdinalIgnoreCase);
+
+	// timeout tested by an if, while, &&, ||, ! or ?: is the event (istimeout).
+	private Rewriter TimeoutEvents()
+	{
+		Expr Event(Expr e) => e switch
+		{
+			NameExpr { Name: var n } when n.Equals("timeout", StringComparison.OrdinalIgnoreCase) && events.IsEventFlag(n) => new NameExpr("istimeout"),
+			BinaryExpr { Op: "&&" or "||" } b when Event(b.Left) is var l && Event(b.Right) is var r && (!ReferenceEquals(l, b.Left) || !ReferenceEquals(r, b.Right)) => b with { Left = l, Right = r },
+			UnaryExpr { Op: "!" } u when Event(u.Operand) is var x && !ReferenceEquals(x, u.Operand) => u with { Operand = x },
+			_ => e,
+		};
+		Expr? Changed(Expr before, Expr after) => ReferenceEquals(before, after) ? null : after;
+		return new Rewriter(
+			expr: e => e switch
+			{
+				BinaryExpr { Op: "&&" or "||" } or UnaryExpr { Op: "!" } => Changed(e, Event(e)),
+				ConditionalExpr t => Changed(t.Condition, Event(t.Condition)) is { } c ? t with { Condition = c } : null,
+				_ => null,
+			},
+			stmt: s => s switch
+			{
+				IfStmt i when Changed(i.Condition, Event(i.Condition)) is { } c => [Keep(s, i with { Condition = c })],
+				WhileStmt w when Changed(w.Condition, Event(w.Condition)) is { } c => [Keep(s, w with { Condition = c })],
+				DoWhileStmt d when Changed(d.Condition, Event(d.Condition)) is { } c => [Keep(s, d with { Condition = c })],
+				_ => null,
+			},
+			keep: KeepAny);
+	}
+
+	// A bare name GS1 reads as the player's flag: one of no GS1 meaning, never assigned, no event.
+	private bool IsPlayerFlag(string name) =>
+		Gs1Flags && Identifier.IsMatch(name) && !IsReserved(name) && !Gs1Names.Contains(name) && !BuiltInNames.Globals.Contains(name) && !_universe.Contains(name)
+		&& !shared.Contains(name) && !Flag(name) && !events.IsEventFlag(name) && !name.Contains("::", StringComparison.Ordinal)
+		&& !name.StartsWith("peltwith", StringComparison.OrdinalIgnoreCase)
+		&& !name.StartsWith("player", StringComparison.OrdinalIgnoreCase) && !name.StartsWith("carries", StringComparison.OrdinalIgnoreCase)
+		&& !name.Equals("NULL", StringComparison.Ordinal);
 
 	// The custom events of this script: names other scripts send that this one only ever tests (each use a condition, never set).
 	private void FindCustomEvents(List<Stmt> main, List<FunctionDecl> functions)
@@ -378,30 +517,44 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		// makevar("this.x") is the variable this.x; makevar("flag") (set/unset/setstring of a GS1 flag) is the player's flag.
 		CallExpr { Name: "makevar", Args: [StringExpr { Value: var name }] } when VariablePath(name) is { } path => path,
 		NameExpr { Name: "NULL" } => new NullExpr(),
-		// 0x40 is written 64.
+		// GS1: a bare name nothing defines is the player's flag (set flag; and if (flag) are one variable).
+		NameExpr { Name: var flag } bare when !_scoped.Contains(bare) && IsPlayerFlag(flag) && _playerFlags.Add(flag) | true => new MemberExpr(new NameExpr("player"), flag),
+		// A member named by something that is not a GS2 name (this.2dstars, this.632, temp.default) is the member of that name.
+		MemberExpr { Name: var memberName } badMember when !Identifier.IsMatch(memberName) || IsReserved(memberName) => new DynamicMemberExpr(badMember.Target, new StringExpr(memberName)),
+		// 0x40 is written 64; up to 8 digits a hex number is 32 bits (0xFFFFFFFF is -1).
 		NumberExpr { Text: var hex } when hex.Length > 2 && hex[0] == '0' && hex[1] is 'x' or 'X' && long.TryParse(hex[2..], System.Globalization.NumberStyles.HexNumber, null, out var value) =>
-			new NumberExpr(value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+			Number(hex.Length <= 10 ? (int)(uint)value : value),
+		// 1e5 (in no GS2 documentation) is written 100000.
+		NumberExpr { Text: var exp } when exp.Contains('e', StringComparison.OrdinalIgnoreCase) && !exp.StartsWith("0x", StringComparison.OrdinalIgnoreCase) && decimal.TryParse(exp, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) =>
+			new NumberExpr(number.ToString("0.############################", System.Globalization.CultureInfo.InvariantCulture)),
+		// GS2 documents no \t in texts: a tab is TAB.
+		StringExpr { Value: var tabbed } when tabbed.Contains('\t') => tabbed.Split('\t').Select(Expr (part) => new StringExpr(part)).Aggregate((a, b) => new BinaryExpr(a, "\t", b)),
 		// GS1's =< and => are <= and >=.
 		BinaryExpr { Op: "=<" } le => le with { Op = "<=" },
 		BinaryExpr { Op: "=>" } ge => ge with { Op = ">=" },
-		// GS1's strtofloat is the float cast.
-		CallExpr { Name: "strtofloat", Args: [var value] } => new CallExpr("float", [value]),
+		// Old text functions in GS2 code read their argument's source text: keycode(m) is the key m, lindexof(0, this.list) the
+		// position of "0" in the list. (Anything else is left as written.)
+		CallExpr { Name: var kc, Args: [var key and (NameExpr or NumberExpr)] } when kc.Equals("keycode", StringComparison.OrdinalIgnoreCase) => new CallExpr("getkeycode", [new StringExpr(SourceText(key))]),
+		CallExpr { Name: var li, Args: [var item and (NameExpr or NumberExpr), var list and (MemberExpr or NameExpr)] } when li.Equals("lindexof", StringComparison.OrdinalIgnoreCase) =>
+			new MethodCallExpr(list, "index", [new StringExpr(SourceText(item))]),
+		// GS1's x in <a, b> leaves out its bounds (only |a, b| is GS2's): written as comparisons.
+		InExpr { High: { } high, LowExclusive: var lx, HighExclusive: var hx } range when (lx || hx) && _gs1Code && Rewriter.IsPure(range.Value) =>
+			new BinaryExpr(new BinaryExpr(range.Value, lx ? ">" : ">=", range.Low), "&&", new BinaryExpr(range.Value, hx ? "<" : "<=", high)),
+		// sarraylen(this.list) in GS2 code: the length of the list the old text function names.
+		CallExpr { Name: var sl, Args: [var listPath and (MemberExpr or NameExpr)] } when sl.Equals("sarraylen", StringComparison.OrdinalIgnoreCase) => new CallExpr("arraylen", [listPath]),
 		// strequals casts its arguments itself.
 		CallExpr { Name: "strequals", Args: [var a, var b] } c => Uncast(a) is var ua && Uncast(b) is var ub && (!ReferenceEquals(ua, a) || !ReferenceEquals(ub, b)) ? c with { Args = [ua, ub] } : null,
 		CallExpr c when _renamed.TryGetValue(c.Name, out var renamed) && (!IsBuiltIn(c.Name) || functions.Any(f => f.Name.Equals(c.Name, StringComparison.OrdinalIgnoreCase) && f.Params.Count == c.Args.Count)) => c with { Name = renamed },
-		ConditionalExpr t when Comparison(t.Condition) is var tc && !ReferenceEquals(tc, t.Condition) => t with { Condition = tc },
-		BinaryExpr { Op: "&&" or "||" } lb when Comparison(lb) is var lc && !ReferenceEquals(lc, lb) => lc,
-		UnaryExpr { Op: "!" } nu when Comparison(nu) is var nc && !ReferenceEquals(nc, nu) => nc,
 		_ => null,
 	};
 
 	/// <summary>What a GS1 statement means, written in GS2.</summary>
 	private IEnumerable<Stmt>? Core(Stmt s) => s switch
 	{
-		// In a GS1 condition, = compares.
-		IfStmt i when Comparison(i.Condition) is var c && !ReferenceEquals(c, i.Condition) => [Keep(s, i with { Condition = c })],
-		WhileStmt w when Comparison(w.Condition) is var c && !ReferenceEquals(c, w.Condition) => [Keep(s, w with { Condition = c })],
-		ForStmt { Condition: { } fc } f when Comparison(fc) is var c && !ReferenceEquals(c, fc) => [Keep(s, f with { Condition = c })],
+		// a, b; is a; b;
+		ExprStmt { Expression: SequenceExpr q } => q.Items.Select((x, i) => i == 0 ? Keep(s, new ExprStmt(x)) : new ExprStmt(x)).ToList(),
+		// for (a, b; c; d) is a; b; for (; c; d).
+		ForStmt { Init: SequenceExpr q } f => [.. q.Items.Select(x => new ExprStmt(x)), Keep(s, f with { Init = null })],
 		// A read alone does nothing.
 		ExprStmt { Expression: MemberExpr or NumberExpr or StringExpr or IndexExpr or BoolExpr } read => Dropped(s, new Printer().Expr(read.Expression)),
 		// timeout = x; is setTimer(x); (the engine: "like assigning timeout").
@@ -422,9 +575,9 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		var withPlayer = handler && !NoPlayerEvents.Contains(f.Name);
 		var rewriter = new Rewriter(expr: e => e switch
 		{
-			IndexExpr { Target: NameExpr { Name: "players" }, Indices: [NumberExpr { Text: "0" }] } when withPlayer => new NameExpr("player"),
-			IndexExpr { Target: NameExpr { Name: "players" }, Indices: [NumberExpr { Text: "0" }] } when !handler => throw new UnconvertibleException("players[0] in a function (whose event decides who it is)"),
-			IndexExpr { Target: NameExpr { Name: "players" }, Indices: [var index] } when index is not (NumberExpr { Text: "0" } or NameExpr or MemberExpr or CallExpr { Name: "float" or "int", Args: [NameExpr or MemberExpr] }) =>
+			IndexExpr { Target: var l0, Indices: [NumberExpr { Text: "0" }] } when IsPlayersList(l0) && withPlayer => new NameExpr("player"),
+			IndexExpr { Target: var l1, Indices: [NumberExpr { Text: "0" }] } when IsPlayersList(l1) && !handler => throw new UnconvertibleException("players[0] in a function (whose event decides who it is)"),
+			IndexExpr { Target: var l2, Indices: [var index] } when IsPlayersList(l2) && index is not (NumberExpr { Text: "0" } or NameExpr or MemberExpr or CallExpr { Name: "float" or "int", Args: [NameExpr or MemberExpr] }) =>
 				throw new UnconvertibleException("players[" + new Printer().Expr(index) + "]: GS1 lists the event's player first"),
 			_ => null,
 		}, keep: KeepAny);
@@ -438,16 +591,10 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		return [Keep(s, new CommentStmt($"// {word}; (this did nothing in the GS1 script)"))];
 	}
 
-	/// <summary>A condition with GS1's comparing = written ==, through &amp;&amp;, || and !.</summary>
-	private static Expr Comparison(Expr e) => e switch
-	{
-		BinaryExpr { Op: "=" } b => b with { Op = "==", Left = Comparison(b.Left), Right = Comparison(b.Right) },
-		BinaryExpr { Op: "==" or "!=" or "<" or ">" or "<=" or ">=" or "+" or "-" or "*" or "/" or "%" or "@" } b when Comparison(b.Left) is var l && Comparison(b.Right) is var r && (!ReferenceEquals(l, b.Left) || !ReferenceEquals(r, b.Right)) => b with { Left = l, Right = r },
-		BinaryExpr { Op: "&&" or "||" } b when Comparison(b.Left) is var l && Comparison(b.Right) is var r && (!ReferenceEquals(l, b.Left) || !ReferenceEquals(r, b.Right)) => b with { Left = l, Right = r },
-		UnaryExpr { Op: "!" } u when Comparison(u.Operand) is var x && !ReferenceEquals(x, u.Operand) => u with { Operand = x },
-		ConditionalExpr t when Comparison(t.Condition) is var c && !ReferenceEquals(c, t.Condition) => t with { Condition = c },
-		_ => e,
-	};
+	private static Expr Number(long value) =>
+		value < 0 ? new UnaryExpr("-", new NumberExpr((-value).ToString(System.Globalization.CultureInfo.InvariantCulture))) : new NumberExpr(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+	private static string SourceText(Expr e) => e is NameExpr n ? n.Name : ((NumberExpr)e).Text;
 
 	private static Expr Uncast(Expr e) => e is UnaryExpr { Op: "@", Operand: MemberExpr or NameExpr or IndexExpr } c ? c.Operand : e;
 
@@ -457,12 +604,16 @@ internal sealed class PartConverter(Comments comments, bool client, EventTable e
 		if (parts.Any(p => p.Length == 0 || !(Identifier.IsMatch(p) || p.All(char.IsAsciiDigit)) || IsReserved(p))) return null;
 		if (parts.Length == 1)
 		{
-			// A GS1 flag without a prefix: the player's (the account's unprefixed flags are the player's members).
-			if (!Identifier.IsMatch(parts[0]) || events.IsEventFlag(parts[0]) || client) return null;
+			// A GS1 flag without a prefix: the player's (the account's unprefixed flags are the player's members); with gs1-flags, on
+			// either side, unless the script assigns the name (then it is that variable).
+			if (!Identifier.IsMatch(parts[0]) || events.IsEventFlag(parts[0])) return null;
+			if (Gs1Flags && _universe.Contains(parts[0])) return new NameExpr(parts[0]);
+			if (client && !Gs1Flags) return null;
 			return new MemberExpr(new NameExpr("player"), parts[0]);
 		}
 		if (!Identifier.IsMatch(parts[0])) return null;
-		Expr e = new NameExpr(parts[0]);
+		// quest.step: the player's flag quest.step, when quest is no GS1 object and no variable of the script's.
+		Expr e = IsPlayerFlag(parts[0]) ? new MemberExpr(new NameExpr("player"), parts[0]) : new NameExpr(parts[0]);
 		foreach (var p in parts.Skip(1)) e = new MemberExpr(e, p);
 		return e;
 	}

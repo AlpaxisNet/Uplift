@@ -1,5 +1,5 @@
 // GS2 source from the syntax tree. Precedence (low to high), the same as the parser's: assignment, ?:, ||, &&, & | << >>,
-// == != in, < <= > >=, @ SPC NL TAB, + -, * / % ^, prefix, postfix.
+// == != in, < <= > >=, @ SPC NL TAB, + -, * / % (GS1: * /, then %), ^, prefix, postfix.
 using System.Globalization;
 using System.Text;
 using Uplift.Syntax;
@@ -17,6 +17,9 @@ public sealed class Printer
 	public Comments? Comments { get; init; }
 
 	public string Indent { get; init; } = "  ";
+
+	/// <summary>Comments written /* */ (a lambda's body, written on one line).</summary>
+	public bool BlockComments { get; init; }
 
 	public override string ToString() => _out.ToString();
 
@@ -137,11 +140,15 @@ public sealed class Printer
 				_indent--;
 				Line("}");
 				break;
-			case BreakStmt:
-				Line("break;" + Trailing(statement));
+			case BreakStmt b:
+				Line((b.Label == null ? "break;" : $"break {b.Label};") + Trailing(statement));
 				break;
-			case ContinueStmt:
-				Line("continue;" + Trailing(statement));
+			case ContinueStmt c:
+				Line((c.Label == null ? "continue;" : $"continue {c.Label};") + Trailing(statement));
+				break;
+			case LabeledStmt l:
+				Line(l.Label + ":");
+				Statement(l.Body);
 				break;
 			case NewStmt n:
 				Line($"new {(n.TypeExpr != null ? "(" + Expr(n.TypeExpr) + ")" : n.TypeName)}({Args(n.Args)}) {{" + Trailing(statement));
@@ -149,7 +156,7 @@ public sealed class Printer
 				Line("};");
 				break;
 			case CommentStmt c:
-				Line(c.Text);
+				Line(BlockComments && c.Text.StartsWith("//", StringComparison.Ordinal) ? "/* " + c.Text[2..].Trim().Replace("*/", "* /", StringComparison.Ordinal) + " */" : c.Text);
 				break;
 			default:
 				throw new NotSupportedException("statement " + statement.GetType().Name);
@@ -194,9 +201,14 @@ public sealed class Printer
 			SequenceExpr => 0,
 			InExpr => 6,
 			ConditionalExpr => 2,
-			UnaryExpr { Postfix: false } => 11,
-			_ => 12,
+			UnaryExpr { Postfix: false } => 12,
+			_ => 13,
 		};
+
+	// ^ and % are written with parentheses wherever their tier could be read another way (GS1 binds % above * and /; ^ is
+	// above * / % in GS2, its grouping with itself and with the prefix operators is not documented).
+	private static bool Ambiguous(BinaryExpr parent, Expr operand) =>
+		operand is BinaryExpr { Op: var op } && parent.Op is "*" or "/" or "%" && (op == "^" || op is "*" or "/" or "%" && (op == "%") != (parent.Op == "%"));
 
 	public static int OpPrec(string op) =>
 		op switch
@@ -209,7 +221,8 @@ public sealed class Printer
 			"<" or "<=" or ">" or ">=" or "=<" or "=>" => 7,
 			"@" or " " or "\n" or "\t" => 8,
 			"+" or "-" => 9,
-			"*" or "/" or "%" or "^" => 10,
+			"*" or "/" or "%" => 10,
+			"^" => 11,
 			_ => throw new NotSupportedException("operator " + op),
 		};
 
@@ -223,8 +236,9 @@ public sealed class Printer
 			{
 				var p = OpPrec(b.Op);
 				var op = b.Op switch { " " => "SPC", "\n" => "NL", "\t" => "TAB", _ => b.Op };
-				if (p == 1) return $"{Wrap(b.Left, Prec(b.Left) < 12)} {op} {Wrap(b.Right, Prec(b.Right) < 1)}";
-				return $"{Wrap(b.Left, Prec(b.Left) < p)} {op} {Wrap(b.Right, Prec(b.Right) <= p)}";
+				if (p == 1) return $"{Wrap(b.Left, Prec(b.Left) < 13)} {op} {Wrap(b.Right, Prec(b.Right) < 1)}";
+				if (b.Op == "^") return $"{Wrap(b.Left, Prec(b.Left) < 13)} ^ {Wrap(b.Right, Prec(b.Right) < 13)}";
+				return $"{Wrap(b.Left, Prec(b.Left) < p || Ambiguous(b, b.Left))} {op} {Wrap(b.Right, Prec(b.Right) <= p || Ambiguous(b, b.Right))}";
 			}
 			case InExpr i:
 			{
@@ -235,20 +249,20 @@ public sealed class Printer
 			case ConditionalExpr t:
 				return $"{Wrap(t.Condition, Prec(t.Condition) <= 2)} ? {Expr(t.Then)} : {Wrap(t.Else, Prec(t.Else) < 2)}";
 			case UnaryExpr { Postfix: true } u:
-				return Wrap(u.Operand, Prec(u.Operand) < 12) + u.Op;
+				return Wrap(u.Operand, Prec(u.Operand) < 13) + u.Op;
 			case UnaryExpr u:
 			{
-				var inner = Wrap(u.Operand, Prec(u.Operand) < 11);
+				var inner = Wrap(u.Operand, Prec(u.Operand) < 12);
 				// "- -x" and "--x" differ; "!-x" is fine.
 				if (u.Op is "-" or "+" && inner.StartsWith(u.Op[0])) inner = "(" + Expr(u.Operand) + ")";
 				return u.Op + inner;
 			}
 			case MemberExpr m:
-				return $"{Wrap(m.Target, Prec(m.Target) < 12 || m.Target is NumberExpr)}.{m.Name}";
+				return $"{Wrap(m.Target, Prec(m.Target) < 13 || m.Target is NumberExpr)}.{m.Name}";
 			case DynamicMemberExpr d:
-				return $"{Wrap(d.Target, Prec(d.Target) < 12 || d.Target is NumberExpr)}.({Expr(d.Name)})";
+				return $"{Wrap(d.Target, Prec(d.Target) < 13 || d.Target is NumberExpr)}.({Expr(d.Name)})";
 			case IndexExpr a:
-				return $"{Wrap(a.Target, Prec(a.Target) < 12)}[{Args(a.Indices)}]";
+				return $"{Wrap(a.Target, Prec(a.Target) < 13)}[{Args(a.Indices)}]";
 			case NameExpr id:
 				return id.Name;
 			case NumberExpr n:
@@ -262,7 +276,7 @@ public sealed class Printer
 			case CallExpr c:
 				return $"{c.Name}({Args(c.Args)})";
 			case MethodCallExpr m:
-				return $"{Wrap(m.Target, Prec(m.Target) < 12 || m.Target is NumberExpr)}.{m.Name}({Args(m.Args)})";
+				return $"{Wrap(m.Target, Prec(m.Target) < 13 || m.Target is NumberExpr)}.{m.Name}({Args(m.Args)})";
 			case DynamicCallExpr d:
 				return d.Callee is DynamicMemberExpr ? $"{Expr(d.Callee)}({Args(d.Args)})" : $"({Expr(d.Callee)})({Args(d.Args)})";
 			case NewExpr n:
@@ -275,7 +289,8 @@ public sealed class Printer
 				return "{" + Args(a.Items) + "}";
 			case FunctionExpr l:
 			{
-				var inner = new Printer { Indent = Indent };
+				// The body is written on one line: its comments as /* */.
+				var inner = new Printer { Indent = Indent, BlockComments = true };
 				inner.Statements(l.Body);
 				return $"function({string.Join(", ", l.Params)}) {{ {inner.ToString().Replace("\n", " ").Trim()} }}";
 			}

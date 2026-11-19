@@ -10,27 +10,26 @@ public sealed class EventTable
 	{
 		["created"] = "onCreated", ["initialized"] = "onInitialized", ["istimeout"] = "onTimeout", ["timeout"] = "onTimeout",
 		["playerenters"] = "onPlayerEnters", ["playerleaves"] = "onPlayerLeaves", ["playertouchsme"] = "onPlayerTouchsMe",
-		["playertouchesme"] = "onPlayerTouchsMe", ["playertouchsother"] = "onPlayerTouchsOther", ["playertouchesother"] = "onPlayerTouchsOther",
-		["playerchats"] = "onPlayerChats", ["playerhurt"] = "onPlayerHurt", ["playerhurted"] = "onPlayerHurt", ["playerdies"] = "onPlayerDies",
+		["playertouchsother"] = "onPlayerTouchsOther", ["playerchats"] = "onPlayerChats", ["playerhurt"] = "onPlayerHurt", ["playerdies"] = "onPlayerDies",
 		["playerlaysitem"] = "onPlayerLaysItem", ["playerendsreading"] = "onPlayerEndsReading", ["compusdied"] = "onCompusDied",
 		["emoticon"] = "onEmoticon", ["mousedown"] = "onMouseDown", ["mouseup"] = "onMouseUp", ["mousewheel"] = "onMouseWheel",
-		["exploded"] = "onExploded", ["wasshot"] = "onWasShot", ["wasshooted"] = "onWasShot", ["waspelt"] = "onWasPelt",
+		["exploded"] = "onExploded", ["wasshot"] = "onWasShot", ["waspelt"] = "onWasPelt",
 		["keypressed"] = "onKeyPressed", ["washit"] = "onWasHit", ["shapetrigger"] = "onShapeTrigger", ["playanimation"] = "onPlayAnimation",
 		["pkzonechanges"] = "onPkZoneChanges", ["weaponfired"] = "onWeaponFired", ["actionserverside"] = "onActionServerSide",
 		["actionclientside"] = "onActionClientSide", ["wasthrown"] = "onWasThrown", ["movementfinished"] = "onMovementFinished",
 	};
 
-	// Misspellings of playerenters (never true in GS1): read as playerenters only with the misspelt-events rule.
+	// Words that are no event (never true in GS1) but were meant as one: read as that event only with the misspelt-events rule.
 	private static readonly Dictionary<string, string> Misspelt = new(StringComparer.OrdinalIgnoreCase)
 	{
 		["playerenterslevel"] = "playerenters", ["playereneterslevel"] = "playerenters", ["playereters"] = "playerenters",
+		["playertouchesme"] = "playertouchsme", ["playertouchesother"] = "playertouchsother", ["playerhurted"] = "playerhurt", ["wasshooted"] = "wasshot",
 	};
 
-	private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
-	{
-		["timeout"] = "istimeout", ["playertouchesme"] = "playertouchsme", ["playertouchesother"] = "playertouchsother",
-		["playerhurted"] = "playerhurt", ["wasshooted"] = "wasshot",
-	};
+	private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase) { ["timeout"] = "istimeout" };
+
+	// GS1 compared an event's name with its case: PlayerEnters was never true. Read without case only with the misspelt-events rule.
+	private readonly bool _anyCase;
 
 	private readonly Dictionary<string, string> _functions;
 	private readonly Dictionary<string, string> _canon;
@@ -42,6 +41,7 @@ public sealed class EventTable
 	{
 		_functions = new Dictionary<string, string>(Standard, StringComparer.OrdinalIgnoreCase);
 		_canon = new Dictionary<string, string>(Aliases, StringComparer.OrdinalIgnoreCase);
+		_anyCase = misspelt;
 		if (misspelt)
 			foreach (var (word, meant) in Misspelt)
 			{
@@ -56,14 +56,14 @@ public sealed class EventTable
 
 	public IReadOnlySet<string> CustomEvents { get; }
 
-	/// <summary>Whether a word is a misspelling read as another event.</summary>
-	public bool IsMisspelling(string word) => Misspelt.ContainsKey(word) && _canon.ContainsKey(word);
+	/// <summary>Whether a word is read as an event GS1 never had it be (a misspelling, or an event's name in another case).</summary>
+	public bool IsMisspelling(string word) => _anyCase && (Misspelt.ContainsKey(word) || Standard.ContainsKey(word) && word != word.ToLowerInvariant());
 
-	public bool IsStandard(string name) => _functions.ContainsKey(name);
+	public bool IsStandard(string name) => _functions.ContainsKey(name) && (_anyCase || name == name.ToLowerInvariant());
 
 	/// <summary>Whether a word is a GS1 event flag: a known event, or action&lt;name&gt; (triggeraction).</summary>
 	public bool IsEventFlag(string name) =>
-		_functions.ContainsKey(name) || name.Length > 6 && name.StartsWith("action", StringComparison.OrdinalIgnoreCase) && Gs1Converter.Identifier.IsMatch(name);
+		IsStandard(name) || name.Length > 6 && name.StartsWith("action", StringComparison.OrdinalIgnoreCase) && Gs1Converter.Identifier.IsMatch(name);
 
 	/// <summary>The one name of an event that has several (timeout and istimeout ...).</summary>
 	public string Canon(string flag) => _canon.TryGetValue(flag, out var c) ? c : flag.ToLowerInvariant();

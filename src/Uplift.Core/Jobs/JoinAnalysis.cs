@@ -5,9 +5,10 @@ using Uplift.Rules;
 namespace Uplift.Jobs;
 
 /// <summary>
-///     Classes converted from GS1 that other scripts join. In GS1, join included the class's main code, so a joined class's event code
-///     ran alongside the script's own. In GS2 a script's own event function comes first: a script that joins the class and defines the
-///     same event function on the same side hides the class's. Each such pair is reported, for a person to call the class's code.
+///     Classes converted from GS1 that other scripts join. GS1 ran only the joining script's main code (a joined class gave it its
+///     functions, and its event tests made the script's code run): the class's own code outside functions never ran. Converted, that
+///     code is the class's event functions, which GS2 runs; and a script that joins the class and defines the same event function on
+///     the same side hides the class's. Each such pair is reported, for a person to decide which code should run.
 /// </summary>
 public static class JoinAnalysis
 {
@@ -42,7 +43,7 @@ public static class JoinAnalysis
 					.Intersect(f.EventFunctions.Where(e => e.Side == side).Select(e => e.Function), StringComparer.OrdinalIgnoreCase).ToList();
 				foreach (var fn in shared)
 					yield return $"{f.File.RelativePath} ({side.ToString().ToLowerInvariant()}) joins class {name}, which was converted from GS1, and defines {fn} itself: " +
-					             $"GS2 runs the script's own {fn} instead of the class's (in GS1 both ran); call the class's code from it.";
+					             $"GS2 runs the script's own {fn}, not the class's. The class's {fn} is its GS1 code outside functions, which never ran in GS1 when the class was joined: check which code should run.";
 			}
 	}
 }

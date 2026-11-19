@@ -51,8 +51,11 @@ public sealed class RuleContext
 	/// <summary>The part was read as GS1 (not GS2 with GS1-looking code).</summary>
 	public bool ReadAsGs1 { get; }
 
-	/// <summary>A level NPC's server part read as GS1: the NPC-Server gave it GS1's meanings of players, playerscount, setani ....</summary>
-	public bool Gs1LevelServer => Kind == ScriptKind.LevelNpc && Side == ScriptSide.Server && ReadAsGs1;
+	/// <summary>Whether the code being rewritten is GS1's: a part read as GS1, a mixed part's main code, or its functions when they are GS1 too.</summary>
+	public bool Gs1Code { get; internal set; }
+
+	/// <summary>A level NPC's server GS1 code: the NPC-Server gave it GS1's meanings of players, playerscount, setani ....</summary>
+	public bool Gs1LevelServer => Kind == ScriptKind.LevelNpc && Side == ScriptSide.Server && Gs1Code;
 
 	/// <summary>The functions the script defines itself (case-insensitive).</summary>
 	public IReadOnlySet<string> FunctionNames { get; }
@@ -85,14 +88,18 @@ public static class BuiltInRules
 {
 	public const string MisspeltEventsId = "misspelt-events";
 
+	public const string Gs1FlagsId = "gs1-flags";
+
 	public static IReadOnlyList<IConversionRule> All { get; } =
 	[
 		new CallNpcSelfRule(),
 		new Gs1LevelNamesRule(),
 		new SelfMessageCodesRule(),
 		new CommandTyposRule(),
+		new SwitchRule(Gs1FlagsId, "GS1 flags are the player's",
+			"In GS1 a bare name that the script never assigns and that GS1 does not define (if (gotsword), quest.step) is the player's flag of that name, the same variable set gotsword; writes. GS2 reads a bare name as something else: written player.gotsword and player.quest.step, on the server and the client. Only in GS1 code: a part read as GS1, a mixed part's main code, and its functions when they have nothing of GS2's."),
 		new SwitchRule(MisspeltEventsId, "Misspelt events are events",
-			"playerenterslevel, playereneterslevel and playereters (never true in GS1, so the code never ran) are read as playerenters: the code runs in onPlayerEnters as its author meant."),
+			"playerenterslevel, playereneterslevel, playereters, playertouchesme, playertouchesother, playerhurted, wasshooted and event names in another case (PlayerEnters) were never true in GS1, so their code never ran. Read as the events they meant (playerenters, playertouchsme, playerhurt, wasshot ...): the code runs as its author meant."),
 	];
 }
 
@@ -164,20 +171,22 @@ public sealed class Gs1LevelNamesRule : IConversionRule
 {
 	public string Id => "gs1-level-names";
 
-	public string Title => "GS1 level-NPC names → GS2 (playerscount, npcscount, setani, setbow)";
+	public string Title => "GS1 level-NPC names → GS2 (players, npcs, playerscount, npcscount, setani, setbow)";
 
 	public string Description =>
-		"A level NPC's server code read as GS1 gets GS1's meanings of playerscount, npcscount, setani and setbow, which GS2 code does not get: written players.size(), npcs.size(), player.setani(...) and player.bowimg = ... (unless the script defines a function of that name).";
+		"A level NPC's server code read as GS1 gets GS1's meanings of players, npcs, playerscount, npcscount, setani and setbow, which GS2 code does not get (on a GS2 server, a bare players is empty): written level.players, level.npcs, level.players.size(), level.npcs.size(), player.setani(...) and player.bowimg = ... (unless the script defines a function of that name).";
 
 	public Expr? RewriteExpression(Expr expression, RuleContext context)
 	{
 		if (!context.Gs1LevelServer) return null;
 		switch (expression)
 		{
+			case NameExpr { Name: "players" or "npcs" } list:
+				return new MemberExpr(new NameExpr("level"), list.Name);
 			case NameExpr { Name: var n } when n.Equals("playerscount", StringComparison.OrdinalIgnoreCase):
-				return new MethodCallExpr(new NameExpr("players"), "size", []);
+				return new MethodCallExpr(new MemberExpr(new NameExpr("level"), "players"), "size", []);
 			case NameExpr { Name: var n } when n.Equals("npcscount", StringComparison.OrdinalIgnoreCase):
-				return new MethodCallExpr(new NameExpr("npcs"), "size", []);
+				return new MethodCallExpr(new MemberExpr(new NameExpr("level"), "npcs"), "size", []);
 			case CallExpr { Name: var n } call when n.Equals("setani", StringComparison.OrdinalIgnoreCase) && !context.FunctionNames.Contains("setani"):
 				return new MethodCallExpr(new NameExpr("player"), "setani", call.Args);
 			default:
@@ -206,7 +215,7 @@ public sealed class SelfMessageCodesRule : IConversionRule
 
 	public Expr? RewriteExpression(Expr expression, RuleContext context)
 	{
-		if (expression is not IndexExpr { Target: NameExpr { Name: "players" }, Indices: [NumberExpr { Text: "-1" } or UnaryExpr { Op: "-", Operand: NumberExpr { Text: "1" } }] }) return null;
+		if (expression is not IndexExpr { Target: var list, Indices: [NumberExpr { Text: "-1" } or UnaryExpr { Op: "-", Operand: NumberExpr { Text: "1" } }] } || !Gs1Converter.IsPlayersList(list)) return null;
 		context.Note("players[-1] (the NPC itself in GS1) written as this");
 		return new NameExpr("this");
 	}
@@ -221,12 +230,14 @@ public sealed class CommandTyposRule : IConversionRule
 		["donnotblock"] = "dontblock", ["dontblok"] = "dontblock", ["drawunderplayr"] = "drawunderplayer", ["drawaslights"] = "drawaslight",
 	};
 
-	public string Id => "command-typos";
+	public const string RuleId = "command-typos";
 
-	public string Title => "Misspelt commands are the commands";
+	public string Id => RuleId;
+
+	public string Title => "Misspelt or joined commands are the commands";
 
 	public string Description =>
-		"drawoveplayer, dontblok, drawaslights ...: GS1 read a misspelt command as a bare word that did nothing. Written as the command its author meant (a bug fix: the command now runs).";
+		"drawoveplayer, dontblok, drawaslights ...: GS1 read a misspelt command as a bare word that did nothing, and the original compiler dropped a command written against its number (sleep1, freezeplayer.05). Written as the command its author meant (a bug fix: the command now runs). Off: misspelt commands and joined ones are kept as comments.";
 
 	public IEnumerable<Stmt>? RewriteStatement(Stmt statement, RuleContext context)
 	{

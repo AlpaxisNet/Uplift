@@ -19,7 +19,8 @@ public sealed class ConversionEngine
 	private readonly ConvertOptions _options;
 	private readonly Dictionary<string, (bool Keep, string Text)> _overrides = new(StringComparer.OrdinalIgnoreCase);
 
-	public ConversionEngine(Workspace workspace, ConvertOptions options, IReadOnlyCollection<string> customEvents)
+	// sharedVariables: the bare names the server's scripts assign (Workspace.SharedVariables).
+	public ConversionEngine(Workspace workspace, ConvertOptions options, IReadOnlyCollection<string> customEvents, IReadOnlyCollection<string>? sharedVariables = null)
 	{
 		Workspace = workspace;
 		_options = options;
@@ -27,7 +28,10 @@ public sealed class ConversionEngine
 		Rules = workspace.Registry.Rules.Where(r => switches.Contains(r.Id)).ToList();
 		_fixes = workspace.Registry.TextFixes.Where(f => switches.Contains(f.Id)).ToList();
 		Catalog = workspace.Catalog;
-		_converter = new Gs1Converter(new ConversionOptions { CustomEvents = customEvents, Rules = Rules, ExtraEvents = workspace.Registry.Events, Catalog = Catalog });
+		_converter = new Gs1Converter(new ConversionOptions
+		{
+			CustomEvents = customEvents, Rules = Rules, ExtraEvents = workspace.Registry.Events, Catalog = Catalog, SharedVariables = sharedVariables ?? [],
+		});
 		if (workspace.OverridesFolder is { } folder && Directory.Exists(folder))
 			foreach (var f in Directory.EnumerateFiles(folder))
 			{

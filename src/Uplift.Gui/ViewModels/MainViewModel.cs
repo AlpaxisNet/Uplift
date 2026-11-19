@@ -11,6 +11,7 @@ public sealed class MainViewModel : ViewModelBase
 	private readonly Settings _settings;
 	private CancellationTokenSource? _cancel;
 	private IReadOnlyCollection<string> _events = [];
+	private IReadOnlyCollection<string> _shared = [];
 	private string _serverFolder;
 	private string _outputFolder;
 	private bool _outputToFolder = true;
@@ -352,7 +353,7 @@ public sealed class MainViewModel : ViewModelBase
 		{
 			Status = "Opening " + root;
 			var progress = new Progress<JobProgress>(ShowProgress);
-			var (workspace, scan, events) = await Task.Run(() =>
+			var (workspace, scan, events, shared) = await Task.Run(() =>
 			{
 				var w = Workspace.Open(root, [System.IO.Path.Combine(AppContext.BaseDirectory, "plugins")]);
 				if (!w.Layout.LooksLikeServer())
@@ -360,10 +361,13 @@ public sealed class MainViewModel : ViewModelBase
 				var s = ConversionRun.Scan(w, ScriptKinds.All, Workers.DefaultParallelism, progress, token);
 				((IProgress<JobProgress>)progress).Report(new JobProgress("Finding custom events", 0, 1));
 				var e = w.CustomEvents(Workers.DefaultParallelism, token);
-				return (w, s, e);
+				((IProgress<JobProgress>)progress).Report(new JobProgress("Finding shared variables", 0, 1));
+				var v = w.SharedVariables(Workers.DefaultParallelism, token);
+				return (w, s, e, v);
 			}, token);
 			Workspace = workspace;
 			_events = events;
+			_shared = shared;
 			_settings.ServerFolder = root;
 			_settings.Save();
 			if (OutputFolder.Length == 0) OutputFolder = root.TrimEnd(System.IO.Path.DirectorySeparatorChar) + "-GS2";
@@ -488,7 +492,7 @@ public sealed class MainViewModel : ViewModelBase
 		PreviewTitle = item.Path + " — converting...";
 		try
 		{
-			var outcome = await ConversionRun.PreviewAsync(Workspace, Options(preview: true), _events, item.Scan.Kind, item.Scan.File);
+			var outcome = await ConversionRun.PreviewAsync(Workspace, Options(preview: true), _events, item.Scan.Kind, item.Scan.File, _shared);
 			if (version != _previewVersion) return;
 			PreviewOriginal = outcome.OriginalText ?? "";
 			PreviewConverted = outcome.Unreadable != null ? "// " + outcome.Unreadable : outcome.NewText ?? outcome.OriginalText ?? "";

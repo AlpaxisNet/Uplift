@@ -52,6 +52,15 @@ public sealed class ParseResult
 	/// <summary>The GS2-only syntax met (SPC, @, quoted text, method calls, ?:, in, parameters ...): GS1 has none of it.</summary>
 	public required Gs1Signs Gs2Only { get; init; }
 
+	/// <summary>The GS1 commands written against their first number (sleep1;), and their source text.</summary>
+	public IReadOnlyDictionary<Stmt, string> Glued { get; init; } = new Dictionary<Stmt, string>();
+
+	/// <summary>The calls GS1 commands and functions became.</summary>
+	public IReadOnlySet<CallExpr> Lowered { get; init; } = new HashSet<CallExpr>();
+
+	/// <summary>What the reading found that a person should check (each once).</summary>
+	public required IReadOnlyCollection<string> Notes { get; init; }
+
 	public bool Success => Script != null;
 }
 
@@ -80,11 +89,14 @@ public sealed class Parser
 	private readonly Lexer _lexer;
 	private readonly Gs1Signs _signs = new();
 	private readonly Gs1Signs _gs2Only = new();
+	private readonly SortedSet<string> _notes = new(StringComparer.Ordinal);
 	private readonly List<FunctionDecl> _hoisted = [];
+	private readonly List<string> _labels = [];
+	private readonly Dictionary<Stmt, string> _glued = new(ReferenceEqualityComparer.Instance);
+	private readonly HashSet<CallExpr> _lowered = new(ReferenceEqualityComparer.Instance);
 	private readonly List<Item> _hoistedDeclarations = [];
 	private int _pos;
 	private int _lastEnd;
-	private bool _inCondition;
 	private int _functionDepth;
 	private Token _peeked;
 	private int _peekedAt = -1;
@@ -108,15 +120,15 @@ public sealed class Parser
 		try
 		{
 			var script = parser.ScriptRule();
-			return new ParseResult { Script = script, Lines = parser._lines, Comments = parser._lexer.Comments, Signs = parser._signs, Gs2Only = parser._gs2Only };
+			return new ParseResult { Script = script, Lines = parser._lines, Comments = parser._lexer.Comments, Signs = parser._signs, Gs2Only = parser._gs2Only, Notes = parser._notes, Glued = parser._glued, Lowered = parser._lowered };
 		}
 		catch (ParseException e)
 		{
-			return new ParseResult { Error = e.Message, ErrorLine = parser._lexer.LineOf(Math.Min(e.Position, source.Length)), Lines = parser._lines, Comments = parser._lexer.Comments, Signs = parser._signs, Gs2Only = parser._gs2Only };
+			return new ParseResult { Error = e.Message, ErrorLine = parser._lexer.LineOf(Math.Min(e.Position, source.Length)), Lines = parser._lines, Comments = parser._lexer.Comments, Signs = parser._signs, Gs2Only = parser._gs2Only, Notes = parser._notes, Glued = parser._glued, Lowered = parser._lowered };
 		}
 		catch (InsufficientExecutionStackException)
 		{
-			return new ParseResult { Error = "nested too deeply", Lines = parser._lines, Comments = parser._lexer.Comments, Signs = parser._signs, Gs2Only = parser._gs2Only };
+			return new ParseResult { Error = "nested too deeply", Lines = parser._lines, Comments = parser._lexer.Comments, Signs = parser._signs, Gs2Only = parser._gs2Only, Notes = parser._notes, Glued = parser._glued, Lowered = parser._lowered };
 		}
 	}
 
@@ -342,6 +354,23 @@ public sealed class Parser
 			return null;
 		}
 		if (t.Is("{")) return Mark(new BlockStmt(Block()), start);
+		// label: for/while/do/switch (GS2).
+		if (IsName(t) && PeekAfter(t) is var colon && colon.Is(":") && PeekAfter(colon) is { Kind: TokenKind.Identifier, Text: "for" or "while" or "do" or "switch" })
+		{
+			Take();
+			Take();
+			_gs2Only.AddIf(!Legacy, "label");
+			_labels.Add(t.Text);
+			try
+			{
+				var loop = Statement() ?? throw Error("expected a loop after the label");
+				return Mark(new LabeledStmt(t.Text, loop), start);
+			}
+			finally
+			{
+				_labels.RemoveAt(_labels.Count - 1);
+			}
+		}
 		if (t.Kind == TokenKind.Identifier)
 			switch (t.Text)
 			{
@@ -352,7 +381,7 @@ public sealed class Parser
 					Take();
 					Expect("(");
 					var c = Condition();
-					Expect(")");
+					CloseParen();
 					return Mark(new WhileStmt(c, Body()), start);
 				}
 				case "do":
@@ -387,14 +416,19 @@ public sealed class Parser
 					EndStatement();
 					return Mark(new ReturnStmt(value), start);
 				}
-				case "break":
+				case "break" or "continue":
+				{
 					Take();
+					// break label; names an enclosing labelled statement (GS1 has no labels: there, break outer; is break; outer;).
+					string? label = null;
+					if (Peek() is { Kind: TokenKind.Identifier } name && _labels.Contains(name.Text) && _lexer.LineOf(name.Start) == _lexer.LineOf(t.Start))
+					{
+						Take();
+						label = name.Text;
+					}
 					EndStatement();
-					return Mark(new BreakStmt(), start);
-				case "continue":
-					Take();
-					EndStatement();
-					return Mark(new ContinueStmt(), start);
+					return t.Text == "break" ? Mark<Stmt>(new BreakStmt(label), start) : Mark<Stmt>(new ContinueStmt(label), start);
+				}
 				case "const" when PeekAfter(t).Kind == TokenKind.Identifier:
 				{
 					Take();
@@ -408,14 +442,12 @@ public sealed class Parser
 				case "enum":
 					_hoistedDeclarations.Add(Mark(Enum(), start));
 					return null;
-				case "function" or "public" when Legacy:
+				case "function" or "public" when IsName(PeekAfter(t)) || PeekAfter(t).Is("function"):
 				{
-					// GS1 defines a function wherever it is written: it is the script's.
+					// A function written inside a statement (GS1, or GS2 after an unclosed function) is the script's, under its own name.
 					_hoisted.Add(Mark(Function(), start));
 					return null;
 				}
-				case "function" or "public":
-					throw Error("a function inside a statement");
 				case "else" or "elseif" or "case" or "default":
 					throw Error($"'{t.Text}' without its statement");
 				case "new" when IsNewStatement(t):
@@ -436,13 +468,24 @@ public sealed class Parser
 					return Mark(new NewStmt(type, args, body, typeExpr), start);
 				}
 			}
-		if (Legacy && t.Kind == TokenKind.Identifier && _catalog.TryGetCommand(t.Text, out var command) && IsCommandForm(t))
-			return Mark(Command(t, command), start);
-		// A command written against its first number (sleep0.5, putleaps2,1,2): GS1 reads the command, then the number.
+		Stmt? spacedCall = null;
+		if (Legacy && t.Kind == TokenKind.Identifier && _catalog.TryGetCommand(t.Text, out var command) && IsCommandForm(t) && !(PeekAfter(t).Is("(") && (spacedCall = CallStatement(start)) != null))
+		{
+			// freezeplayer.05: a command written against its number.
+			var joined = PeekAfter(t) is { Kind: TokenKind.Number } number && number.Start == t.End;
+			var statement = Mark(Command(t, command), start);
+			if (joined) _glued[statement] = _lexer.Source[start.._lastEnd].Trim();
+			return statement;
+		}
+		if (spacedCall != null) return spacedCall;
+		// A command written against its first number (sleep1, putleaps2,1,2): read as the command and its number, and marked (the
+		// original GS1 compiler dropped such a statement; the command-typos rule makes it the command its author meant).
 		if (Legacy && t.Kind == TokenKind.Identifier && !_catalog.TryGetCommand(t.Text, out _) && GluedCommand(t) is { } glued)
 		{
 			var name = new Token(TokenKind.Identifier, t.Text[..glued.Name.Length], t.Start, t.Start + glued.Name.Length);
-			return Mark(Command(name, glued), start);
+			var statement = Mark(Command(name, glued), start);
+			_glued[statement] = _lexer.Source[start.._lastEnd].Trim();
+			return statement;
 		}
 		var expression = Sequence();
 		EndStatement();
@@ -484,12 +527,19 @@ public sealed class Parser
 		return _lexer.Read(t.End).Is("{");
 	}
 
+	// GS1 passes over a ; just before a ): if (a = 1;) is if (a = 1).
+	private void CloseParen()
+	{
+		if (Legacy && Is(";") && PeekAfter(Peek()).Is(")")) Take();
+		Expect(")");
+	}
+
 	private Stmt If(int start)
 	{
 		Take();
 		Expect("(");
 		var condition = Condition();
-		Expect(")");
+		CloseParen();
 		var then = Body();
 		if (Is("else"))
 		{
@@ -521,7 +571,7 @@ public sealed class Parser
 			}
 		}
 		Expect(";");
-		var condition = Is(";") ? null : Condition();
+		var condition = Is(";") ? null : Condition(comparing: false);
 		Expect(";");
 		var step = Is(")") ? null : Sequence();
 		Accept(";");
@@ -566,10 +616,32 @@ public sealed class Parser
 
 	// ------------------------------------------------------------ GS1 commands
 
+	// addweapon ("x"); is the call when the statement is the call and nothing else (an old command and a parenthesis are no old syntax);
+	// otherwise the text (say2 (hi) there;).
+	private Stmt? CallStatement(int start)
+	{
+		var (pos, lastEnd) = (_pos, _lastEnd);
+		try
+		{
+			var e = Expression();
+			if (e is CallExpr && (Is(";") || Is("}") || Peek().Kind == TokenKind.End))
+			{
+				EndStatement();
+				return Mark(new ExprStmt(e), start);
+			}
+		}
+		catch (ParseException)
+		{
+		}
+		(_pos, _lastEnd, _peekedAt) = (pos, lastEnd, -1);
+		return null;
+	}
+
+	// The longest command the word starts with whose rest is digits (setlevel2b39 is no command: its rest is not a number).
 	private Gs1Command? GluedCommand(Token word)
 	{
 		for (var length = word.Text.Length - 1; length >= 2; length--)
-			if (char.IsAsciiDigit(word.Text[length]) && _catalog.TryGetCommand(word.Text[..length], out var command) && command.Kinds.Length > 0)
+			if (word.Text[length..].All(char.IsAsciiDigit) && _catalog.TryGetCommand(word.Text[..length], out var command) && command.Kinds.Length > 0)
 				return command;
 		return null;
 	}
@@ -611,7 +683,27 @@ public sealed class Parser
 			}
 		}
 		EndStatement();
-		return _catalog.LowerCommand(name.Text, args, _functionDepth > 0);
+		var lowered = _catalog.LowerCommand(name.Text, args, _functionDepth > 0);
+		if (lowered is ExprStmt { Expression: var call }) Track(call);
+		return lowered;
+	}
+
+	// The calls a GS1 command or function became (the converter writes some of them by the side the part runs on).
+	private void Track(Expr e)
+	{
+		switch (e)
+		{
+			case CallExpr c:
+				_lowered.Add(c);
+				break;
+			case BinaryExpr b:
+				Track(b.Left);
+				Track(b.Right);
+				break;
+			case UnaryExpr u:
+				Track(u.Operand);
+				break;
+		}
 	}
 
 	/// <summary>One argument of a GS1 command or function: text, a number, a variable's name, a message code to set, a direction.</summary>
@@ -624,10 +716,10 @@ public sealed class Parser
 		{
 			case 'N':
 			{
-				var (saved, savedComparing) = (_inCondition, _comparing);
-				(_inCondition, _comparing) = (false, false);
+				var saved = _comparing;
+				_comparing = false;
 				var e = Expression();
-				(_inCondition, _comparing) = (saved, savedComparing);
+				_comparing = saved;
 				return e;
 			}
 			case 'D' when Peek() is { Kind: TokenKind.Identifier } word && Gs1Catalog.Direction(word.Text) is { } direction && PeekAfter(word) is var after && (after.Is(",") || after.Is(";") || after.Is(")") || after.Is("}") || after.Kind == TokenKind.End):
@@ -637,6 +729,8 @@ public sealed class Parser
 				return Argument('N', inCall, false);
 			case 'C' when Peek().Kind == TokenKind.Hash:
 				return Code(true, asTarget: true);
+			case 'B':
+				return Text(inCall, false, true, block: true);
 			default:
 				return Text(inCall, kind == 'V', rest);
 		}
@@ -645,30 +739,20 @@ public sealed class Parser
 	/// <summary>
 	///     A text argument, as GS1 reads it: the characters up to the next comma (a command's last text argument: up to the ; or } that
 	///     ends the statement, commas included; in a function call: up to the ) that ends the call), with its message codes. Line breaks
-	///     are dropped, spaces around the text are not part of it, quotes and // are text. {text} is the text between the braces.
+	///     are dropped, spaces before the text are not part of it, quotes and // are text. A {braced} part is text as written, its
+	///     braces, commas, semicolons and message codes included. A block argument (<paramref name="block" />, putnpc2's script) is
+	///     the text between its braces, line breaks kept.
 	/// </summary>
-	private Expr Text(bool inCall, bool variable, bool rest)
+	private Expr Text(bool inCall, bool variable, bool rest, bool block = false)
 	{
 		var s = _lexer.Source;
 		var i = _lexer.SkipBlank(_pos);
-		if (!variable && i < s.Length && s[i] == '{')
+		if (block && i < s.Length && s[i] == '{' && MatchingBrace(s, i) is var close and > 0)
 		{
-			// {text}: to the matching brace.
-			var depth = 0;
-			var j = i;
-			for (; j < s.Length; j++)
-			{
-				if (s[j] == '{') depth++;
-				else if (s[j] == '}' && --depth == 0) break;
-			}
-			if (j < s.Length)
-			{
-				_pos = j + 1;
-				_lastEnd = j + 1;
-				_peekedAt = -1;
-				// Line breaks are dropped, as in any text argument; the spaces before the first line are not part of it.
-				return new StringExpr(s[(i + 1)..j].Replace("\r", "", StringComparison.Ordinal).Replace("\n", "", StringComparison.Ordinal).TrimStart());
-			}
+			_pos = close + 1;
+			_lastEnd = close + 1;
+			_peekedAt = -1;
+			return new StringExpr(s[(i + 1)..close].Replace("\r", "", StringComparison.Ordinal).TrimStart(' ', '\t', '\n'));
 		}
 		var pieces = new List<Expr>();
 		var literal = new StringBuilder();
@@ -681,14 +765,43 @@ public sealed class Parser
 				if (parens == 0 && (c == ')' || c == ',' && !rest)) break;
 			}
 			else if (c is ';' or '}' || c == ',' && !rest) break;
+			if (c == '{' && !variable && MatchingBrace(s, i) is var end and > 0)
+			{
+				// {text}: as written, to the matching brace.
+				foreach (var b in s.AsSpan(i, end + 1 - i))
+					if (b is not ('\n' or '\r')) literal.Append(b);
+				i = end + 1;
+				continue;
+			}
+			// #i(...), #U(...), #E(...), #R(...), #Q(...): GS1 has no meaning for them; text as written, to the matching parenthesis.
+			if (c == '#' && i + 2 < s.Length && s[i + 1] is 'i' or 'U' or 'E' or 'R' or 'Q' && (s[i + 2] == '(' || s[i + 1] == 'U' && s[i + 2] == '2' && i + 3 < s.Length && s[i + 3] == '(')
+			    && MatchingParen(s, s.IndexOf('(', i)) is var shut and > 0)
+			{
+				foreach (var b in s.AsSpan(i, shut + 1 - i))
+					if (b is not ('\n' or '\r')) literal.Append(b);
+				i = shut + 1;
+				continue;
+			}
+			// ## is a # of the text.
+			if (c == '#' && i + 1 < s.Length && s[i + 1] == '#')
+			{
+				literal.Append('#');
+				i += 2;
+				continue;
+			}
 			if (c == '#' && i + 1 < s.Length && Gs1Catalog.IsCodeStart(s, i + 1))
 			{
-				if (literal.Length > 0) pieces.Add(new StringExpr(literal.ToString()));
-				literal.Clear();
 				_pos = i;
 				_peekedAt = -1;
-				pieces.Add(Code(true, asTarget: false));
+				var code = Code(true, asTarget: false);
 				i = _pos;
+				if (code is StringExpr { Value: var text }) literal.Append(text);
+				else
+				{
+					if (literal.Length > 0) pieces.Add(new StringExpr(literal.ToString()));
+					literal.Clear();
+					pieces.Add(code);
+				}
 				continue;
 			}
 			if (inCall && c == '(') parens++;
@@ -700,10 +813,36 @@ public sealed class Parser
 		_lastEnd = i;
 		_peekedAt = -1;
 		if (literal.Length > 0) pieces.Add(new StringExpr(literal.ToString()));
-		// Spaces before the text are not part of it; spaces after it are.
-		if (pieces.Count > 0 && pieces[0] is StringExpr first) pieces[0] = first with { Value = first.Value.TrimStart() };
+		// Spaces before the text are not part of it; spaces after it are (not after a variable's name: set beer<line break>}).
+		if (pieces.Count > 0 && pieces[0] is StringExpr first) pieces[0] = first with { Value = first.Value.TrimStart(' ', '\t') };
+		if (variable && pieces.Count > 0 && pieces[^1] is StringExpr last) pieces[^1] = last with { Value = last.Value.TrimEnd(' ', '\t') };
 		pieces.RemoveAll(p => p is StringExpr { Value.Length: 0 });
 		return variable ? _catalog.VariableReference(pieces) : _catalog.Text(pieces);
+	}
+
+	// The position of the ) that closes the ( at a position (-1: none).
+	private static int MatchingParen(string s, int open)
+	{
+		var depth = 0;
+		for (var j = open; j < s.Length; j++)
+		{
+			if (s[j] == '(') depth++;
+			else if (s[j] == ')' && --depth == 0) return j;
+			else if (s[j] is ';' or '\n') return -1;
+		}
+		return -1;
+	}
+
+	// The position of the } that closes the { at a position (-1: none).
+	private static int MatchingBrace(string s, int open)
+	{
+		var depth = 0;
+		for (var j = open; j < s.Length; j++)
+		{
+			if (s[j] == '{') depth++;
+			else if (s[j] == '}' && --depth == 0) return j;
+		}
+		return -1;
 	}
 
 	/// <summary>A message code at '#': #c, #C0, #P12, #v(expr), #s(name), #3(-1) ...; as the target of setplayerprop, the code itself.</summary>
@@ -713,7 +852,7 @@ public sealed class Parser
 		var start = _lexer.SkipBlank(_pos);
 		if (start >= s.Length || s[start] != '#') throw Error("expected a message code");
 		var i = start + 1;
-		var code = Gs1Catalog.ReadCodeName(s, ref i);
+		var code = Gs1Catalog.ReadCodeName(s, ref i, asTarget);
 		if (code == null) throw new ParseException("unknown message code #" + (i < s.Length ? s[i] : ' '), start);
 		_pos = i;
 		_lastEnd = i;
@@ -737,6 +876,8 @@ public sealed class Parser
 			Expect(")");
 		}
 		if (asTarget) return new Gs1CodeExpr(code, args);
+		// #7 and #K(n) are GS1 text as written (only setplayerprop #7 sets the bow).
+		if (Gs1Catalog.IsLiteralCode(code)) return new StringExpr(s[start.._lastEnd].Replace("\r", "", StringComparison.Ordinal).Replace("\n", "", StringComparison.Ordinal));
 		var expr = _catalog.LowerCode(code, args) ?? throw new ParseException($"message code #{code} with these arguments", start);
 		if (!inText && Gs1Catalog.IsAttributeCode(code)) _attributeValues.Add(expr);
 		return expr;
@@ -747,28 +888,42 @@ public sealed class Parser
 
 	// ------------------------------------------------------------ expressions
 
-	/// <summary>A condition: in GS1, = compares, and binds after &amp;&amp; and || (a = b = c is a = (b = c)).</summary>
-	private Expr Condition()
+	/// <summary>
+	///     An if, while or do-while condition (<paramref name="comparing" />), or a for condition. GS1: in an if or while condition the
+	///     first = compares, binding after &amp;&amp; and || (a &amp;&amp; b = c is (a &amp;&amp; b) == c); its operands are values, where a
+	///     further = assigns (a = b = c is a == (b = c)). A for condition, like any value, assigns. GS2: an if or while condition
+	///     compares with = too, through &amp;&amp;, || and ! and in the operands of comparisons.
+	/// </summary>
+	private Expr Condition(bool comparing = true)
 	{
-		var (savedCondition, savedComparing) = (_inCondition, _comparing);
-		_inCondition = true;
-		_comparing = Legacy;
+		var saved = _comparing;
+		_comparing = Legacy && comparing;
 		try
 		{
-			return Expression();
+			var e = Expression();
+			return comparing && !Legacy ? Comparison(e) : e;
 		}
 		finally
 		{
-			(_inCondition, _comparing) = (savedCondition, savedComparing);
+			_comparing = saved;
 		}
 	}
 
-	// GS1: where = compares (a condition, the value of an assignment). In a condition it is kept as = (the converter writes ==
-	// and notes a && b = c); elsewhere it is ==.
+	// GS1: whether the next = compares (in an if or while condition, outside the operands of a comparing =).
 	private bool _comparing;
 
-	// How many assignments' values are being read (a = b = c: 1 while reading b = c).
-	private int _assignmentDepth;
+	/// <summary>A GS2 condition with its comparing = written ==, through &amp;&amp;, || and ! and in the operands of comparisons.</summary>
+	public static Expr Comparison(Expr e) => e switch
+	{
+		BinaryExpr { Op: "=" } b => b with { Op = "==", Left = Comparison(b.Left), Right = Comparison(b.Right) },
+		BinaryExpr { Op: "==" or "!=" or "<" or ">" or "<=" or ">=" or "+" or "-" or "*" or "/" or "%" or "@" or "&&" or "||" } b
+			when Comparison(b.Left) is var l && Comparison(b.Right) is var r && (!ReferenceEquals(l, b.Left) || !ReferenceEquals(r, b.Right)) => b with { Left = l, Right = r },
+		UnaryExpr { Op: "!" } u when Comparison(u.Operand) is var x && !ReferenceEquals(x, u.Operand) => u with { Operand = x },
+		ConditionalExpr t when Comparison(t.Condition) is var c && !ReferenceEquals(c, t.Condition) => t with { Condition = c },
+		_ => e,
+	};
+
+	private static bool IsAssignable(Expr e) => e is NameExpr or MemberExpr or DynamicMemberExpr or IndexExpr;
 
 	private Expr LegacyEquals()
 	{
@@ -776,8 +931,44 @@ public sealed class Parser
 		if (!(Legacy && _comparing && Is("="))) return left;
 		Take();
 		_signs.Add("= comparing");
-		return new BinaryExpr(left, _inCondition ? "=" : "==", LegacyEquals());
+		if (left is BinaryExpr { Op: "&&" or "||" }) _notes.Add(AndOrEqualsNote);
+		// Its operands are values: a further = assigns (if (a = b = c) is a == (b = c)); one after && or ||, whose left side
+		// is no variable, compares (if (a = 1 && b = 0) is a == ((1 && b) == 0)).
+		_comparing = false;
+		try
+		{
+			var right = Or();
+			if (Peek() is { Kind: TokenKind.Operator } t && AssignOps.Contains(t.Text))
+			{
+				if (t.Text == "=" && !IsAssignable(right)) return new BinaryExpr(left, "==", Equals(right));
+				Take();
+				right = new BinaryExpr(right, t.Text, Assignment());
+			}
+			return new BinaryExpr(left, "==", right);
+		}
+		finally
+		{
+			_comparing = true;
+		}
+
+		// right = ... with right no variable: the = compares, and so on to the right.
+		Expr Equals(Expr value)
+		{
+			Take();
+			_comparing = false;
+			var next = Or();
+			if (Is("=") && !IsAssignable(next)) return new BinaryExpr(value, "==", Equals(next));
+			if (Peek() is { Kind: TokenKind.Operator } t && AssignOps.Contains(t.Text))
+			{
+				Take();
+				next = new BinaryExpr(next, t.Text, Assignment());
+			}
+			return new BinaryExpr(value, "==", next);
+		}
 	}
+
+	public const string AndOrEqualsNote =
+		"GS1's comparing = binds after && and ||: a && b = c is (a && b) == c (kept as it is): check that the script meant it";
 
 	public Expr Expression() => Assignment();
 
@@ -810,17 +1001,14 @@ public sealed class Parser
 		if (t.Kind == TokenKind.Operator && AssignOps.Contains(t.Text) && !(Legacy && _comparing && t.Text == "="))
 		{
 			Take();
-			// GS1 has no a = b = c: in the value of an assignment, = compares (in a part read as GS1; GS2's a = b = c assigns both).
-			var savedComparing = _comparing;
-			if (_dialect == Dialect.Gs1) _comparing = true;
-			_assignmentDepth++;
+			// The value of an assignment is a value: there = assigns (a = b = c sets both, in GS1 as in GS2).
+			var saved = _comparing;
+			_comparing = false;
 			var right = Assignment();
-			_assignmentDepth--;
-			_comparing = savedComparing;
+			_comparing = saved;
+			if (Legacy && t.Text == "=" && right is BinaryExpr { Op: "=" })
+				_notes.Add("GS1 assigns in an assignment's value: a = b = c sets b too (r = c = 1 ? 1 : 0 sets c): check that the script meant it");
 			if (t.Text == "=" && _attributeValues.Contains(right)) right = new BinaryExpr(new StringExpr(""), "@", right);
-			// GS1: in r = c = 1 ? a : b, c = 1 is the condition of the ?: (it compares).
-			if (Legacy && t.Text == "=" && _assignmentDepth > 0 && right is ConditionalExpr choice)
-				return choice with { Condition = new BinaryExpr(left, "==", choice.Condition) };
 			return new BinaryExpr(left, t.Text, right);
 		}
 		return left;
@@ -830,7 +1018,6 @@ public sealed class Parser
 	{
 		var condition = LegacyEquals();
 		if (!Accept("?")) return condition;
-		_gs2Only.AddIf(!Legacy, "?:");
 		var then = Assignment();
 		Expect(":");
 		var otherwise = Assignment();
@@ -944,13 +1131,36 @@ public sealed class Parser
 		return left;
 	}
 
+	// GS2: * / % on one tier, then ^ (power), then the prefix operators. GS1: * /, then % (it binds tighter than * and /), then ^.
 	private Expr Multiplicative()
 	{
-		var left = Unary();
-		while (Peek() is { Kind: TokenKind.Operator, Text: "*" or "/" or "%" or "^" } t)
+		var left = Legacy ? Modulo() : Power();
+		while (Peek() is { Kind: TokenKind.Operator, Text: "*" or "/" or "%" } t && !(Legacy && t.Text == "%"))
 		{
 			Take();
-			left = new BinaryExpr(left, t.Text, Unary());
+			left = new BinaryExpr(left, t.Text, Legacy ? Modulo() : Power());
+		}
+		return left;
+	}
+
+	private Expr Modulo()
+	{
+		var left = Power();
+		while (Peek() is { Kind: TokenKind.Operator, Text: "%" })
+		{
+			Take();
+			left = new BinaryExpr(left, "%", Power());
+		}
+		return left;
+	}
+
+	private Expr Power()
+	{
+		var left = Unary();
+		while (Peek() is { Kind: TokenKind.Operator, Text: "^" })
+		{
+			Take();
+			left = new BinaryExpr(left, "^", Unary());
 		}
 		return left;
 	}
@@ -986,6 +1196,19 @@ public sealed class Parser
 				var member = Peek();
 				if (member.Kind is not (TokenKind.Identifier or TokenKind.Number)) throw Error("expected a member name");
 				Take();
+				// this.2dstars: a member whose name starts with digits (the lexer read 2, then dstars).
+				if (member.Kind == TokenKind.Number && member.Text.All(char.IsAsciiDigit) && Peek() is { Kind: TokenKind.Identifier } rest && rest.Start == member.End)
+				{
+					Take();
+					member = member with { Text = member.Text + rest.Text, End = rest.End };
+				}
+				// GS1: this.oldap#a is the member named oldap#a.
+				while (Legacy && Peek() is { Kind: TokenKind.Hash } hash && hash.Start == member.End && PeekAfter(hash) is { Kind: TokenKind.Identifier or TokenKind.Number } word && word.Start == hash.End)
+				{
+					Take();
+					Take();
+					member = member with { Text = member.Text + "#" + word.Text, End = word.End };
+				}
 				if (Is("("))
 				{
 					Take();
@@ -1001,9 +1224,15 @@ public sealed class Parser
 			}
 			else if (t.Kind == TokenKind.Number && t.Text.StartsWith('.') && t.Start == _lastEnd && t.Text[1..].All(char.IsAsciiDigit))
 			{
-				// o.5: the member named 5 (the lexer read .5 as a number).
+				// o.5, this.2dstars: the member named 5 or 2dstars (the lexer read .5 or .2 as a number).
 				Take();
-				e = new MemberExpr(e, t.Text[1..]);
+				var name = t.Text[1..];
+				if (Peek() is { Kind: TokenKind.Identifier } rest && rest.Start == t.End)
+				{
+					Take();
+					name += rest.Text;
+				}
+				e = new MemberExpr(e, name);
 			}
 			else if (t.Is("("))
 			{
@@ -1027,17 +1256,24 @@ public sealed class Parser
 
 	private List<Expr> Arguments(string close)
 	{
-		var (saved, savedComparing) = (_inCondition, _comparing);
-		(_inCondition, _comparing) = (false, false);
+		var saved = _comparing;
+		_comparing = false;
 		var args = new List<Expr>();
 		if (!Is(close))
 			do
 			{
-				// An empty argument is the empty text.
-				args.Add(Is(",") || Is(close) ? new StringExpr("") : Expression());
+				// A comma before the closing bracket ends the list (f(a,) is f(a)).
+				if (args.Count > 0 && Is(close)) break;
+				// GS1: an empty argument is the empty text; GS2 has none.
+				if (Is(",") || Is(close))
+				{
+					if (!Legacy) throw Error("expected an argument");
+					args.Add(new StringExpr(""));
+				}
+				else args.Add(Expression());
 			} while (Accept(","));
 		Expect(close);
-		(_inCondition, _comparing) = (saved, savedComparing);
+		_comparing = saved;
 		return args;
 	}
 
@@ -1051,7 +1287,6 @@ public sealed class Parser
 				return new NumberExpr(t.Text);
 			case TokenKind.String:
 				Take();
-				_gs2Only.AddIf(!Legacy, "quoted text");
 				return new StringExpr(t.Value!);
 			case TokenKind.Hash when Legacy:
 				return Code(false, asTarget: false);
@@ -1059,21 +1294,21 @@ public sealed class Parser
 			{
 				Take();
 				var inner = Expression();
-				Expect(")");
+				CloseParen();
 				return inner;
 			}
 			case TokenKind.Operator when t.Text == "{":
 			{
 				Take();
 				var items = new List<Expr>();
-				var saved = _inCondition;
-				_inCondition = false;
+				var saved = _comparing;
+				_comparing = false;
 				while (!Is("}"))
 				{
 					items.Add(Expression());
 					if (!Accept(",")) break;
 				}
-				_inCondition = saved;
+				_comparing = saved;
 				Expect("}");
 				return new ArrayExpr(items);
 			}
@@ -1117,8 +1352,8 @@ public sealed class Parser
 				if (Legacy && Is("(") && _catalog.TryGetFunction(t.Text, out var function))
 				{
 					Take();
-					var saved = _inCondition;
-					_inCondition = false;
+					var saved = _comparing;
+					_comparing = false;
 					var args = new List<Expr>();
 					if (!Is(")"))
 						for (var i = 0;; i++)
@@ -1127,8 +1362,12 @@ public sealed class Parser
 							if (!Accept(",")) break;
 						}
 					Expect(")");
-					_inCondition = saved;
-					return _catalog.LowerFunction(t.Text, args);
+					_comparing = saved;
+					if (t.Text.Equals("playersays", StringComparison.OrdinalIgnoreCase) && args is [var said] && !(said is StringExpr q && Gs1Catalog.Unquoted(q.Value) != null))
+						_notes.Add("playersays(text): the original GS1 compiler read an unquoted word as a variable's value; written as the text");
+					var call = _catalog.LowerFunction(t.Text, args);
+					Track(call);
+					return call;
 				}
 				if (Legacy && _catalog.LowerName(t.Text) is { } lowered) return lowered;
 				if (_dialect == Dialect.Gs1MainCode && _catalog.LowerName(t.Text, counts: false) is { } player) return player;

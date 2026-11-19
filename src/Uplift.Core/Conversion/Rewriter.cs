@@ -126,6 +126,13 @@ public sealed class Rewriter(
 				}).ToList();
 				return [changed ? K(s, sw with { Value = x, Cases = cases }) : s];
 			}
+			case LabeledStmt l:
+			{
+				// Statements a rewrite puts before the loop go before its label.
+				var list = Statement(l.Body);
+				if (list.Count == 1 && Same(list[0], l.Body)) return [s];
+				return list.Count == 0 ? [] : [.. list[..^1], K(s, l with { Body = list[^1] })];
+			}
 			case NewStmt n:
 			{
 				var args = Exprs(n.Args);
@@ -302,8 +309,8 @@ public sealed class Rewriter(
 			InExpr i => IsPure(i.Value) && IsPure(i.Low) && (i.High == null || IsPure(i.High)),
 			ConditionalExpr t => IsPure(t.Condition) && IsPure(t.Then) && IsPure(t.Else),
 			// Functions that only read.
-			CallExpr { Name: "strequals" or "strlen" or "startswith" or "strcontains" or "contains" or "indexof" or "strtofloat" or "abs" or "int" or "float" or "arraylen" or "sarraylen" or "keydown" or "keydown2" or "onwall" or "onwall2" or "onwater" or "hasweapon" or "findweapon" or "lindexof" } c => c.Args.All(IsPure),
-			MethodCallExpr { Name: "starts" or "pos" or "length" or "size" or "index" or "substring" or "trim" or "lower" or "upper" or "hasweapon" or "tokenize" } m => IsPure(m.Target) && m.Args.All(IsPure),
+			CallExpr { Name: "strequals" or "strlen" or "startswith" or "strcontains" or "contains" or "indexof" or "strtofloat" or "abs" or "int" or "float" or "arraylen" or "sarraylen" or "keydown" or "keydown2" or "onwall" or "onwall2" or "onwater" or "hasweapon" or "findweapon" or "lindexof" or "getascii" or "getkeycode" or "getstringkeys" or "getimgwidth" or "getimgheight" or "getmapx" or "getmapy" or "findplayer" or "findnpc" or "char" or "getstringkeys" } c => c.Args.All(IsPure),
+			MethodCallExpr { Name: "starts" or "pos" or "length" or "size" or "index" or "substring" or "trim" or "lower" or "upper" or "hasweapon" or "findweapon" or "tokenize" } m => IsPure(m.Target) && m.Args.All(IsPure),
 			_ => false,
 		};
 }
