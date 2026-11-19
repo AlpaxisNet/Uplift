@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Uplift is released under the MIT License (`LICENSE`), which the downloads now include.
+
 ## 1.0.0
 
 The first release of Uplift, a GS1 to GS2 converter for Graal servers.

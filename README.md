@@ -41,6 +41,7 @@ changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 - [What to check after converting](#what-to-check-after-converting)
 - [Building](#building)
 - [Project layout](#project-layout)
+- [License](#license)
 
 ## Using the window
 
@@ -279,3 +280,8 @@ The GS1 command and message-code catalog, and the rules for GS1's operators, eve
 documentation, chiefly the Graal Bible pages *Old GScript*, *Starting Guide: Old script compatibility* and *GS1 To GS2*. The
 built-in names a bare name is checked against are the *Global* sections of the client's and the NPC server's script help. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)
 for the code Uplift includes from other projects.
+
+## License
+
+Uplift is released under the [MIT License](LICENSE). The code it includes from other projects, and their licences, are listed in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

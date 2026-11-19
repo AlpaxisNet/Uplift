@@ -11,6 +11,7 @@
     <Version>1.0.0</Version>
     <Product>Uplift</Product>
     <Company>Alpaxis</Company>
+    <Copyright>Copyright (c) 2026 Alpaxis</Copyright>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
 </Project>

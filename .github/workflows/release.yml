@@ -50,7 +50,7 @@ jobs:
         run: scripts/publish.sh linux-x64 win-x64
       - name: Package
         run: |
-          for rid in linux-x64 win-x64; do cp README.md THIRD-PARTY-NOTICES.md "dist/uplift-$rid/"; done
+          for rid in linux-x64 win-x64; do cp LICENSE README.md THIRD-PARTY-NOTICES.md "dist/uplift-$rid/"; done
           tar -C dist -czf "dist/uplift-$VERSION-linux-x64.tar.gz" uplift-linux-x64
           (cd dist && zip -qr "uplift-$VERSION-win-x64.zip" uplift-win-x64)
           (cd dist && sha256sum "uplift-$VERSION-linux-x64.tar.gz" "uplift-$VERSION-win-x64.zip" > SHA256SUMS.txt)
