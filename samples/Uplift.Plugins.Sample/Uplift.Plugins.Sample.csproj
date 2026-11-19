@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An example plugin: build it and put Uplift.Plugins.Sample.dll in the plugins folder beside Uplift (or name it in a server's
+       uplift.json, "plugins"). Uplift's own assemblies are compiled against, never copied: the plugin uses the ones Uplift has loaded. -->
+  <PropertyGroup>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Uplift.Core\Uplift.Core.csproj" Private="false" />
+    <ProjectReference Include="..\..\vendor\Compiler\Uplift.Compiler.csproj" Private="false" Condition="Exists('..\..\vendor\Compiler\Uplift.Compiler.csproj')" />
+  </ItemGroup>
+</Project>

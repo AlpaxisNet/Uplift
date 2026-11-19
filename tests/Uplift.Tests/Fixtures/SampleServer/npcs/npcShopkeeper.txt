@@ -1,0 +1,10 @@
+GRNPC001
+NAME Shopkeeper
+TYPE SCRIPT
+NPCSCRIPT
+if (actionbuy) {
+  if (strequals(#p(0),apple)) {
+    callnpc -1,sold;
+  }
+}
+NPCSCRIPTEND

@@ -1,0 +1,17 @@
+GRAWP001
+REALNAME -System/Greeter
+IMAGE wbomb1.png
+SCRIPT
+// Greets the player.
+if (playerenters) {
+  setplayerprop #c,Welcome!;
+  this.visits = this.visits + 1;
+}
+if (weaponfired) {
+  say2 Hello #n;
+}
+//#CLIENTSIDE
+if (created) {
+  showtext 200,30,30,Arial,b,Ready;
+}
+SCRIPTEND

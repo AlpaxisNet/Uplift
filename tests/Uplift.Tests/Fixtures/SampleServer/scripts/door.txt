@@ -1,0 +1,12 @@
+// A door that opens for players who touch it.
+if (created) {
+  setimg door.png;
+  dontblock;
+}
+if (playertouchsme && this.locked == 0) {
+  hide;
+  timeout = 3;
+}
+if (timeout) {
+  show;
+}

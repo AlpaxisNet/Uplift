@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Uplift.Core/Uplift.Core.csproj" />
+    <Project Path="src/Uplift.Cli/Uplift.Cli.csproj" />
+    <Project Path="src/Uplift.Gui/Uplift.Gui.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Uplift.Plugins.Sample/Uplift.Plugins.Sample.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Uplift.Tests/Uplift.Tests.csproj" />
+  </Folder>
+</Solution>

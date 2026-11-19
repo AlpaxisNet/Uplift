@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- uplift-cli: the command line (not "uplift": on Windows that name would clash with the window's Uplift.exe). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>uplift-cli</AssemblyName>
+    <RootNamespace>Uplift.Cli</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Uplift.Core\Uplift.Core.csproj" />
+  </ItemGroup>
+</Project>

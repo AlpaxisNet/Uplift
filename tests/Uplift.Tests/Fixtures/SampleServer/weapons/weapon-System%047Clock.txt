@@ -1,0 +1,14 @@
+GRAWP001
+REALNAME -System/Clock
+IMAGE wbomb1.png
+SCRIPT
+function onCreated() {
+  this.ticks = 0;
+  setTimer(1);
+}
+
+function onTimeout() {
+  this.ticks++;
+  setTimer(1);
+}
+SCRIPTEND

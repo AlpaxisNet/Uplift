@@ -1,0 +1,223 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Uplift.Gui.ViewModels"
+        xmlns:ae="using:AvaloniaEdit"
+        x:Class="Uplift.Gui.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Uplift — GS1 → GS2"
+        Icon="/Assets/uplift.png"
+        MinWidth="1000" MinHeight="640">
+  <Window.Styles>
+    <Style Selector="ListBox.files ListBoxItem">
+      <Setter Property="Padding" Value="6,1" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="ListBox.files CheckBox">
+      <Setter Property="MinHeight" Value="0" />
+      <Setter Property="MinWidth" Value="0" />
+    </Style>
+    <Style Selector="TextBlock.head">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+    </Style>
+    <Style Selector="ae|TextEditor">
+      <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, JetBrains Mono, DejaVu Sans Mono, Menlo, monospace" />
+      <Setter Property="FontSize" Value="13" />
+      <Setter Property="Background" Value="{DynamicResource EditorBrush}" />
+      <Setter Property="Padding" Value="6,4" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <!-- The server, and the theme -->
+    <Border Grid.Row="0" Background="{DynamicResource HeaderBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,0,1" Padding="16,10">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Image Source="/Assets/uplift.png" Width="34" Height="34" />
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="Uplift" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="GS1 → GS2 for Graal servers" Classes="muted" FontSize="12" />
+          </StackPanel>
+        </StackPanel>
+        <Grid Grid.Column="1" ColumnDefinitions="*,Auto,Auto" Margin="36,0,24,0" VerticalAlignment="Center">
+          <TextBox Text="{Binding ServerFolder}" IsEnabled="{Binding IsIdle}" Watermark="Server folder (the one with weapons/, scripts/, npcs/ and levels/)" />
+          <Button Grid.Column="1" Content="Browse…" Command="{Binding BrowseServerCommand}" Margin="8,0,0,0" />
+          <Button Grid.Column="2" Content="Scan" Classes="accent" Command="{Binding ScanCommand}" Margin="8,0,0,0" MinWidth="84" HorizontalContentAlignment="Center" />
+        </Grid>
+        <ComboBox Grid.Column="2" ItemsSource="{Binding Themes}" SelectedIndex="{Binding Theme}" VerticalAlignment="Center" MinWidth="150" ToolTip.Tip="Light, dark, or the system's" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" ColumnDefinitions="330,Auto,*">
+      <!-- What to convert, how, and where -->
+      <Border Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0">
+        <Grid RowDefinitions="*,Auto">
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="16,0,18,8">
+              <TextBlock Classes="section" Text="WHAT TO CONVERT" />
+              <ItemsControl ItemsSource="{Binding Kinds}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:KindOption">
+                    <Grid ColumnDefinitions="*,Auto" Margin="0,1">
+                      <CheckBox IsChecked="{Binding IsChecked}" ToolTip.Tip="{Binding Folder}">
+                        <StackPanel>
+                          <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Summary}" Classes="muted" FontSize="12" />
+                        </StackPanel>
+                      </CheckBox>
+                      <TextBlock Grid.Column="1" Text="{Binding ToConvertText}" Classes="gs1" FontWeight="SemiBold" VerticalAlignment="Center" ToolTip.Tip="Files with GS1 code" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <TextBlock Classes="section" Text="CODE" />
+              <CheckBox IsChecked="{Binding ConvertServer}" Content="Server-side code" />
+              <CheckBox IsChecked="{Binding ConvertClient}" Content="Client-side code (after //#CLIENTSIDE)" />
+
+              <TextBlock Classes="section" Text="RULES" />
+              <ItemsControl ItemsSource="{Binding Rules}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:SwitchOption">
+                    <CheckBox IsChecked="{Binding IsChecked}" ToolTip.Tip="{Binding Tip}">
+                      <TextBlock Text="{Binding Title}" TextWrapping="Wrap" />
+                    </CheckBox>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <TextBlock Classes="section" Text="TEXT FIXES (REGEX ON CODE, NOT STRINGS OR COMMENTS)" TextWrapping="Wrap" />
+              <ItemsControl ItemsSource="{Binding Fixes}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:SwitchOption">
+                    <CheckBox IsChecked="{Binding IsChecked}" ToolTip.Tip="{Binding Tip}">
+                      <TextBlock Text="{Binding Title}" TextWrapping="Wrap" />
+                    </CheckBox>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <CheckBox IsChecked="{Binding FixAlreadyGs2}" Content="Also fix parts that were GS2 already" />
+
+              <TextBlock Classes="section" Text="FILES" />
+              <CheckBox IsChecked="{Binding Repair}" ToolTip.Tip="A level's missing NPCEND or GLEVNW01 line, a gani's missing SCRIPTEND">
+                <TextBlock Text="Repair files the server cannot read" TextWrapping="Wrap" />
+              </CheckBox>
+
+              <TextBlock Classes="section" Text="OUTPUT" />
+              <RadioButton GroupName="output" IsChecked="{Binding OutputToFolder}" Content="Write to a new folder" />
+              <Grid ColumnDefinitions="*,Auto" Margin="28,2,0,2" IsEnabled="{Binding OutputToFolder}">
+                <TextBox Text="{Binding OutputFolder}" Watermark="Output folder" />
+                <Button Grid.Column="1" Content="…" Command="{Binding BrowseOutputCommand}" Margin="6,0,0,0" ToolTip.Tip="Choose the output folder" />
+              </Grid>
+              <CheckBox Margin="28,0,0,0" IsEnabled="{Binding OutputToFolder}" IsChecked="{Binding CopyUnchanged}" Content="Copy unchanged files too" ToolTip.Tip="A complete copy of the chosen kinds of script, not only the changed files" />
+              <RadioButton GroupName="output" IsChecked="{Binding InPlace}" Content="Convert in place (backed up first)" />
+              <TextBlock Text="{Binding Plugins}" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,10,0,0" />
+            </StackPanel>
+          </ScrollViewer>
+          <Border Grid.Row="1" Padding="16,12" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0">
+            <Button Content="Convert" Classes="accent" Command="{Binding ConvertCommand}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Height="40" FontSize="15" FontWeight="SemiBold" />
+          </Border>
+        </Grid>
+      </Border>
+
+      <GridSplitter Grid.Column="1" Width="5" Background="Transparent" ResizeDirection="Columns" />
+
+      <!-- The files, and the preview of the selected one -->
+      <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*,Auto,1.15*" Margin="6,10,12,8">
+        <Border Grid.Row="0" Classes="card" Background="{DynamicResource BannerBrush}" Padding="12,8" Margin="0,0,0,8" IsVisible="{Binding HasResult}">
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+            <TextBlock Text="{Binding ResultText}" TextWrapping="Wrap" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Content="Open output" Command="{Binding OpenOutputCommand}" Margin="12,0,0,0" />
+            <Button Grid.Column="2" Content="Open report" Command="{Binding OpenReportCommand}" Margin="6,0,0,0" />
+            <Button Grid.Column="3" Content="✕" Command="{Binding DismissResultCommand}" Margin="6,0,0,0" ToolTip.Tip="Hide" />
+          </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,6">
+          <TextBox Text="{Binding Filter}" Watermark="Filter files by name" />
+          <ComboBox Grid.Column="1" ItemsSource="{Binding StateFilters}" SelectedIndex="{Binding StateFilter}" Margin="8,0,0,0" MinWidth="190" />
+          <TextBlock Grid.Column="2" Text="Check:" Classes="muted" VerticalAlignment="Center" Margin="14,0,6,0" />
+          <Button Grid.Column="3" Content="All" Command="{Binding CheckAllCommand}" ToolTip.Tip="Check every file shown" />
+          <Button Grid.Column="4" Content="Needing work" Command="{Binding CheckNeedingCommand}" Margin="4,0,0,0" ToolTip.Tip="Check the shown files with GS1 or broken code; uncheck the rest" />
+          <Button Grid.Column="5" Content="None" Command="{Binding CheckNoneCommand}" Margin="4,0,0,0" ToolTip.Tip="Uncheck every file shown" />
+        </Grid>
+
+        <Border Grid.Row="2" Classes="card">
+          <Grid RowDefinitions="Auto,*,Auto">
+            <Grid ColumnDefinitions="30,*,120,60,60,60,84" Margin="12,7,22,5">
+              <TextBlock Grid.Column="1" Classes="head" Text="FILE" />
+              <TextBlock Grid.Column="2" Classes="head" Text="KIND" />
+              <TextBlock Grid.Column="3" Classes="head" Text="GS1" HorizontalAlignment="Right" />
+              <TextBlock Grid.Column="4" Classes="head" Text="GS2" HorizontalAlignment="Right" />
+              <TextBlock Grid.Column="5" Classes="head" Text="BROKEN" HorizontalAlignment="Right" />
+              <TextBlock Grid.Column="6" Classes="head" Text="STATE" Margin="14,0,0,0" />
+            </Grid>
+            <ListBox Grid.Row="1" Classes="files" ItemsSource="{Binding VisibleFiles}" SelectedItem="{Binding SelectedFile}" Background="Transparent">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:FileItem">
+                  <Grid ColumnDefinitions="30,*,120,60,60,60,84" ToolTip.Tip="{Binding Tip}">
+                    <CheckBox IsChecked="{Binding IsChecked}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding Path}" TextTrimming="PathSegmentEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding KindTitle}" Classes="muted" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding Gs1}" Classes="gs1" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="4" Text="{Binding Gs2}" Classes="gs2" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="5" Text="{Binding Broken}" Classes="broken" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="6" Text="{Binding StateText}" Margin="14,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                               Classes.gs1="{Binding IsGs1}" Classes.gs2="{Binding IsGs2}" Classes.broken="{Binding IsBroken}" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Grid.Row="2" Text="{Binding FilesSummary}" Classes="muted" FontSize="12" Margin="12,4,12,6" />
+          </Grid>
+        </Border>
+
+        <GridSplitter Grid.Row="3" Height="6" Background="Transparent" ResizeDirection="Rows" />
+
+        <Border Grid.Row="4" Classes="card">
+          <Grid RowDefinitions="Auto,Auto,*,Auto">
+            <TextBlock Text="{Binding PreviewTitle}" FontWeight="SemiBold" Margin="12,8,12,4" TextTrimming="CharacterEllipsis" />
+            <Grid Grid.Row="1" ColumnDefinitions="*,6,*" Margin="12,0,12,4">
+              <TextBlock Classes="head" Text="ORIGINAL" />
+              <TextBlock Grid.Column="2" Classes="head" Text="CONVERTED (PREVIEW, NOTHING WRITTEN)" />
+            </Grid>
+            <Grid Grid.Row="2" ColumnDefinitions="*,6,*" Margin="8,0,8,0">
+              <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                <ae:TextEditor x:Name="OriginalEditor" IsReadOnly="True" ShowLineNumbers="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+              </Border>
+              <GridSplitter Grid.Column="1" Width="6" Background="Transparent" ResizeDirection="Columns" />
+              <Border Grid.Column="2" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                <ae:TextEditor x:Name="ConvertedEditor" IsReadOnly="True" ShowLineNumbers="True" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" />
+              </Border>
+            </Grid>
+            <ScrollViewer Grid.Row="3" MaxHeight="130" Margin="12,6,12,8">
+              <ItemsControl ItemsSource="{Binding PreviewParts}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:PartRow">
+                    <Grid ColumnDefinitions="210,130,90,*" Margin="0,1">
+                      <TextBlock Text="{Binding Where}" Classes="muted" />
+                      <TextBlock Grid.Column="1" Text="{Binding Result}" FontWeight="SemiBold"
+                                 Classes.gs2="{Binding IsConverted}" Classes.muted="{Binding IsUnchanged}" Classes.gs1="{Binding IsKept}" Classes.broken="{Binding IsFailed}" />
+                      <TextBlock Grid.Column="2" Text="{Binding After}" Classes="muted" />
+                      <TextBlock Grid.Column="3" Text="{Binding Details}" TextWrapping="Wrap" FontSize="12" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <!-- What is going on -->
+    <Border Grid.Row="2" Background="{DynamicResource HeaderBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,6">
+      <Grid ColumnDefinitions="*,Auto,Auto">
+        <TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip.Tip="{Binding Status}" />
+        <ProgressBar Grid.Column="1" Width="240" Margin="12,0,0,0" Value="{Binding Progress}" IsIndeterminate="{Binding ProgressIndeterminate}" IsVisible="{Binding IsBusy}" VerticalAlignment="Center" />
+        <Button Grid.Column="2" Content="Cancel" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" Margin="10,0,0,0" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

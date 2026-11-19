@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Uplift: the window. -->
+  <PropertyGroup>
+    <!-- WinExe: no console window opens on Windows. -->
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>Uplift</AssemblyName>
+    <RootNamespace>Uplift.Gui</RootNamespace>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\uplift.ico</ApplicationIcon>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Avalonia XAML uses reflection: never trim. -->
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Uplift.Core\Uplift.Core.csproj" />
+    <InternalsVisibleTo Include="Uplift.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\Graal.xshd" LogicalName="Uplift.Gui.Graal.xshd" />
+    <AvaloniaResource Include="Assets\uplift.png" />
+  </ItemGroup>
+</Project>

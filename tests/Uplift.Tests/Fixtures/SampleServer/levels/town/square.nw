@@ -1,0 +1,24 @@
+GLEVNW01
+BOARD 0 0 64 0 
+NPC door.png 30 20
+join door;
+NPCEND
+NPC - 10 10
+if (playerchats && strequals(#c,hello)) {
+  setplayerprop #c,Hi there;
+}
+//#CLIENTSIDE
+if (playerenters) {
+  setimgpart sign.png,0,0,32,32;
+}
+NPCEND
+NPC - 12 12
+function onCreated() {
+  setshape(1, 32, 32);
+}
+NPCEND
+NPC - 5 5
+if (created) {
+  sparringzone;
+}
+NPCEND

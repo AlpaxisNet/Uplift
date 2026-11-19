@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copied from GScript.RemoteControl (src/RemoteControl.Scripting/Highlighting/Graal.xshd, MIT: see THIRD-PARTY-NOTICES.md). Uplift recolours it
+  for its light and dark themes (Views/Highlighting.cs).
+  GS2 ("GraalScript") highlighting, translated from assets/runtime/language-specs/graal.lang (GtkSourceView v1).
+  Colour names map to the style names of the language file and the style schemes:
+    Comment = "Comment", String = "String", Decimal = "Decimal", Keyword = "Keyword", Others = "Others",
+    Others4 = "Others 4", Others5 = "Others 5", Operators = "Operators", ObjectProperties = "Object Properties",
+    Function = "Function".
+  The colours below are the defaults of the graalcolors scheme; a theme replaces them by name (SyntaxTheme).
+  Rule order follows the language file, because the first rule matching at a position wins in both engines.
+  The case-insensitive keyword lists are rules with (?i) because xshd case sensitivity is per rule set.
+  Difference from graal.lang: a backslash escapes the next character inside strings, as in the GS2 language.
+-->
+<SyntaxDefinition name="Graal" extensions=".graal;.nw;.gs2" xmlns="http://icsharpcode.net/sharpdevelop/syntaxdefinition/2008">
+  <Color name="Comment" foreground="#75715E" exampleText="// comment" />
+  <Color name="String" foreground="#E6DB74" exampleText="&quot;text&quot;" />
+  <Color name="Decimal" foreground="#BE84FF" exampleText="42" />
+  <Color name="Keyword" foreground="#F92672" exampleText="if" />
+  <Color name="Others" foreground="#F92672" fontWeight="bold" exampleText="new" />
+  <Color name="Others4" foreground="#FFFFFF" exampleText="{ } ( ) ; : , ." />
+  <Color name="Others5" foreground="#F57900" exampleText="this" />
+  <Color name="Operators" foreground="#F92672" exampleText="+ - = [ ]" />
+  <Color name="ObjectProperties" foreground="#3F8C61" exampleText="name" />
+  <Color name="Function" foreground="#A6E22B" exampleText="echo(" />
+
+  <RuleSet name="StringEscapes">
+    <Span begin="\\" end="." />
+  </RuleSet>
+
+  <RuleSet ignoreCase="false">
+    <Span color="String" multiline="true" ruleSet="StringEscapes">
+      <Begin>"</Begin>
+      <End>"</End>
+    </Span>
+    <Span color="String" multiline="false" ruleSet="StringEscapes">
+      <Begin>'</Begin>
+      <End>'</End>
+    </Span>
+    <Span color="Comment" multiline="false">
+      <Begin>//</Begin>
+    </Span>
+    <Span color="Comment" multiline="true">
+      <Begin>/\*</Begin>
+      <End>\*/</End>
+    </Span>
+
+    <!-- Punctuators -->
+    <Rule color="Others4">[{}();:,.]</Rule>
+    <!-- Operators -->
+    <Rule color="Operators">[-~^@/%|=+*!?&amp;&lt;&gt;]</Rule>
+    <!-- Array Operators -->
+    <Rule color="Operators">(\[|\])</Rule>
+    <!-- Numeric -->
+    <Rule color="Decimal">(\b([0-9]+|0[xX][0-9a-fA-F]+)[Ll]?\b|\b(([0-9]+[Ee][-]?[0-9]+|([0-9]*\.[0-9]+|[0-9]+\.)([Ee][-]?[0-9]+)?)[fFdD]?|[0-9]+[FfDd]))</Rule>
+
+    <!-- Declarations -->
+    <Keywords color="Keyword">
+      <Word>class</Word>
+      <Word>extends</Word>
+      <Word>implements</Word>
+      <Word>import</Word>
+      <Word>instanceof</Word>
+      <Word>interface</Word>
+      <Word>native</Word>
+      <Word>package</Word>
+      <Word>volatile</Word>
+      <Word>throws</Word>
+    </Keywords>
+    <!-- Flow -->
+    <Keywords color="Keyword">
+      <Word>break</Word>
+      <Word>case</Word>
+      <Word>continue</Word>
+      <Word>default</Word>
+      <Word>do</Word>
+      <Word>else</Word>
+      <Word>elseif</Word>
+      <Word>for</Word>
+      <Word>function</Word>
+      <Word>if</Word>
+      <Word>in</Word>
+      <Word>return</Word>
+      <Word>switch</Word>
+      <Word>while</Word>
+      <Word>with</Word>
+      <Word>xor</Word>
+    </Keywords>
+    <!-- Modifiers -->
+    <Keywords color="Keyword">
+      <Word>public</Word>
+      <Word>const</Word>
+      <Word>enum</Word>
+    </Keywords>
+    <!-- Memory -->
+    <Keywords color="Others">
+      <Word>new</Word>
+      <Word>datablock</Word>
+    </Keywords>
+    <!-- Builtin Variables (case-insensitive) -->
+    <Rule color="Others">(?i)\b(?:true|false|nil|null|NULL|pi)\b</Rule>
+    <!-- Object Properties -->
+    <Keywords color="ObjectProperties">
+      <Word>name</Word>
+    </Keywords>
+    <!-- Extras (case-insensitive) -->
+    <Rule color="Others5">(?i)\b(?:this|thiso|temp|server|serverr|client|clientr|player)\b</Rule>
+
+    <!-- Functions: an identifier directly followed by '(' -->
+    <Rule color="Function">([a-zA-Z_{1}][a-zA-Z0-9_]*)(?=\()</Rule>
+  </RuleSet>
+</SyntaxDefinition>

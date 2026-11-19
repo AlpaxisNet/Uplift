@@ -1,0 +1,12 @@
+GANI0001
+SPRITES
+SPRITE 0 SPRITES 0 0 32 32 sprite
+SPRITESEND
+ANI
+0 0 0 0
+ANIEND
+SCRIPT
+if (playerenters) {
+  setani idle,;
+}
+SCRIPTEND

@@ -1,0 +1,75 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Uplift.Gui.App"
+             RequestedThemeVariant="Default">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+          <SolidColorBrush x:Key="HeaderBrush" Color="#F4F2FB" />
+          <SolidColorBrush x:Key="PanelBrush" Color="#FAFAFC" />
+          <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF" />
+          <SolidColorBrush x:Key="LineBrush" Color="#E2E0EA" />
+          <SolidColorBrush x:Key="MutedBrush" Color="#6B6880" />
+          <SolidColorBrush x:Key="Gs1Brush" Color="#B45309" />
+          <SolidColorBrush x:Key="Gs2Brush" Color="#15803D" />
+          <SolidColorBrush x:Key="BrokenBrush" Color="#C42B1C" />
+          <SolidColorBrush x:Key="BannerBrush" Color="#EAF4EC" />
+          <SolidColorBrush x:Key="EditorBrush" Color="#FFFFFF" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="HeaderBrush" Color="#1E1B2C" />
+          <SolidColorBrush x:Key="PanelBrush" Color="#1A1A22" />
+          <SolidColorBrush x:Key="CardBrush" Color="#22222C" />
+          <SolidColorBrush x:Key="LineBrush" Color="#33323F" />
+          <SolidColorBrush x:Key="MutedBrush" Color="#A3A0B8" />
+          <SolidColorBrush x:Key="Gs1Brush" Color="#F5A524" />
+          <SolidColorBrush x:Key="Gs2Brush" Color="#4ADE80" />
+          <SolidColorBrush x:Key="BrokenBrush" Color="#F87171" />
+          <SolidColorBrush x:Key="BannerBrush" Color="#1D3326" />
+          <SolidColorBrush x:Key="EditorBrush" Color="#16161D" />
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Light" Accent="#6D4AFF" RegionColor="#FAFAFC" />
+        <ColorPaletteResources x:Key="Dark" Accent="#8B6CFF" RegionColor="#15151B" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
+    <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml" />
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="LetterSpacing" Value="0.8" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+      <Setter Property="Margin" Value="0,14,0,6" />
+    </Style>
+    <Style Selector="TextBlock.muted">
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+    </Style>
+    <Style Selector="TextBlock.gs1">
+      <Setter Property="Foreground" Value="{DynamicResource Gs1Brush}" />
+    </Style>
+    <Style Selector="TextBlock.gs2">
+      <Setter Property="Foreground" Value="{DynamicResource Gs2Brush}" />
+    </Style>
+    <Style Selector="TextBlock.broken">
+      <Setter Property="Foreground" Value="{DynamicResource BrokenBrush}" />
+    </Style>
+    <Style Selector="Border.card">
+      <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="8" />
+    </Style>
+    <Style Selector="CheckBox">
+      <Setter Property="MinHeight" Value="28" />
+    </Style>
+    <Style Selector="RadioButton">
+      <Setter Property="MinHeight" Value="28" />
+    </Style>
+  </Application.Styles>
+</Application>
